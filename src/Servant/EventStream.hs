@@ -1,7 +1,6 @@
 module Servant.EventStream where
 
 import Data.Binary.Builder                  (toLazyByteString)
-import Data.ByteString.Lazy                 (ByteString)
 import Network.HTTP.Media                   ((//), (/:))
 import Network.Wai.EventSource              (ServerEvent(..))
 import Network.Wai.EventSource.EventStream  (eventToBuilder)
