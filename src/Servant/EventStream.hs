@@ -1,4 +1,10 @@
-module Servant.EventStream where
+module Servant.EventStream
+  ( ServerSentEvents
+  , EventStream
+  , EventSource
+  , eventSource
+  )
+where
 
 import Data.Binary.Builder                  (toLazyByteString)
 import Network.HTTP.Media                   ((//), (/:))
