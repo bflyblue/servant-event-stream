@@ -11,7 +11,7 @@ import Network.HTTP.Media                   ((//), (/:))
 import Network.Wai.EventSource              (ServerEvent(..))
 import Network.Wai.EventSource.EventStream  (eventToBuilder)
 import Servant.API
-import Servant.Types.SourceT                (SourceT, StepT(..), fromStepT)
+import Servant.Types.SourceT                (SourceT, fromAction)
 
 type ServerSentEvents = StreamGet NoFraming EventStream EventSource
 
@@ -26,8 +26,7 @@ instance MimeRender EventStream ServerEvent where
   mimeRender _ = maybe "" toLazyByteString . eventToBuilder
 
 eventSource :: Functor m => m ServerEvent -> SourceT m ServerEvent
-eventSource action = fromStepT loop
+eventSource = fromAction isClose
  where
-  loop = Effect $ fmap step action
-  step CloseEvent = Stop
-  step a          = Yield a loop
+  isClose CloseEvent = True
+  isClose _          = False
