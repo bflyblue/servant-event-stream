@@ -3,6 +3,7 @@ module Servant.EventStream
   , EventStream
   , EventSource
   , eventSource
+  , eventSourceMaybe
   )
 where
 
@@ -11,7 +12,7 @@ import Network.HTTP.Media                   ((//), (/:))
 import Network.Wai.EventSource              (ServerEvent(..))
 import Network.Wai.EventSource.EventStream  (eventToBuilder)
 import Servant.API
-import Servant.Types.SourceT                (SourceT, fromAction)
+import Servant.Types.SourceT                (SourceT, fromAction, mapMaybe)
 
 type ServerSentEvents = StreamGet NoFraming EventStream EventSource
 
@@ -30,3 +31,12 @@ eventSource = fromAction isClose
  where
   isClose CloseEvent = True
   isClose _          = False
+
+eventSourceMaybe
+  :: Functor m
+  => m (Maybe ServerEvent)
+  -> SourceT m ServerEvent
+eventSourceMaybe = mapMaybe id . fromAction isClose
+ where
+  isClose (Just CloseEvent) = True
+  isClose _                 = False
