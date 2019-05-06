@@ -3,7 +3,6 @@ module Servant.EventStream
   , EventStream
   , EventSource
   , eventSource
-  , eventSourceMaybe
   )
 where
 
@@ -11,8 +10,9 @@ import Data.Binary.Builder                  (toLazyByteString)
 import Network.HTTP.Media                   ((//), (/:))
 import Network.Wai.EventSource              (ServerEvent(..))
 import Network.Wai.EventSource.EventStream  (eventToBuilder)
+import Pipes
 import Servant.API
-import Servant.Types.SourceT                (SourceT, fromAction, mapMaybe)
+import Servant.Pipes                        (pipesToSourceIO)
 
 type ServerSentEvents = StreamGet NoFraming EventStream EventSource
 
@@ -26,17 +26,11 @@ type EventSource = SourceIO ServerEvent
 instance MimeRender EventStream ServerEvent where
   mimeRender _ = maybe "" toLazyByteString . eventToBuilder
 
-eventSource :: Functor m => m ServerEvent -> SourceT m ServerEvent
-eventSource = fromAction isClose
+eventSource :: Proxy X () () ServerEvent IO () -> EventSource
+eventSource prod = pipesToSourceIO (prod >-> yieldUntilClose)
  where
-  isClose CloseEvent = True
-  isClose _          = False
-
-eventSourceMaybe
-  :: Functor m
-  => m (Maybe ServerEvent)
-  -> SourceT m ServerEvent
-eventSourceMaybe = mapMaybe id . fromAction isClose
- where
-  isClose (Just CloseEvent) = True
-  isClose _                 = False
+  yieldUntilClose = do
+    e <- await
+    case e of
+      CloseEvent -> return ()
+      _ -> yield e >> yieldUntilClose
