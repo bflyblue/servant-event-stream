@@ -100,7 +100,7 @@ jsForAPI p = gen
     fname
       <> " = function(" <> argsStr <> ")\n"
       <> "{\n"
-      <> " return (new EventSource("
+      <> "  return (new EventSource("
       <> url
       <> ", conf));\n"
       <> "}\n"
