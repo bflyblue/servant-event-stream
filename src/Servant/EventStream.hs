@@ -47,13 +47,13 @@ instance  (HasForeignType lang ftype EventSource)
   type Foreign ftype ServerSentEvents = Req ftype
 
   foreignFor lang Proxy Proxy req =
-    req & reqFuncName . _FunctionName %~ (methodLC :)
-        & reqMethod .~ method
-        & reqReturnType .~ Just retType
+    req
+      &  reqFuncName .  _FunctionName %~ ("stream" :)
+      &  reqMethod .~ method
+      &  reqReturnType .~ Just retType
    where
-    retType  = typeFor lang (Proxy :: Proxy ftype) (Proxy :: Proxy EventSource)
-    method   = reflectMethod (Proxy :: Proxy 'GET)
-    methodLC = Text.toLower $ Text.decodeUtf8 method
+    retType = typeFor lang (Proxy :: Proxy ftype) (Proxy :: Proxy EventSource)
+    method  = reflectMethod (Proxy :: Proxy 'GET)
 
 data EventStream
 
