@@ -20,6 +20,7 @@ where
 import           Control.Lens
 import           Data.Binary.Builder            ( toLazyByteString )
 import           Data.Text                      ( Text )
+import qualified Data.Text                     as T
 import           GHC.Generics                   ( Generic )
 import           Network.HTTP.Media             ( (//)
                                                 , (/:)
@@ -58,7 +59,7 @@ instance  (HasForeignType lang ftype EventSource)
     req
       &  reqFuncName .  _FunctionName %~ ("stream" :)
       &  reqMethod .~ method
-      &  reqReturnType .~ Just retType
+      &  reqReturnType ?~ retType
    where
     retType = typeFor lang (Proxy :: Proxy ftype) (Proxy :: Proxy EventSource)
     method  = reflectMethod (Proxy :: Proxy 'GET)
@@ -97,14 +98,25 @@ jsForAPI p = gen
   genEventSource :: Req NoContent -> Text
   genEventSource req =
     fname
-      <> " = function(conf)\n"
+      <> " = function(" <> argsStr <> ")\n"
       <> "{\n"
       <> " return (new EventSource("
       <> url
       <> ", conf));\n"
       <> "}\n"
    where
-    fname   = "var " <> (toValidFunctionName (camelCase $ req ^. reqFuncName))
+    argsStr = T.intercalate ", " args
+    args = captures
+        ++ map (view $ queryArgName . argPath) queryparams
+        ++ ["conf"]
+
+    captures = map (view argPath . captureArg)
+              . filter isCapture
+              $ req ^. reqUrl.path
+
+    queryparams = req ^.. reqUrl.queryStr.traverse
+
+    fname   = "var " <> toValidFunctionName (camelCase $ req ^. reqFuncName)
     url     = if url' == "'" then "'/'" else url'
     url'    = "'" <> urlArgs
     urlArgs = jsSegments $ req ^.. reqUrl . path . traverse
