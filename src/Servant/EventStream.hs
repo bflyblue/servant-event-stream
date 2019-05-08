@@ -96,14 +96,13 @@ jsForAPI p = gen
   gen = mconcat . map genEventSource
 
   genEventSource :: Req NoContent -> Text
-  genEventSource req =
-    fname
-      <> " = function(" <> argsStr <> ")\n"
-      <> "{\n"
-      <> "  return (new EventSource("
-      <> url
-      <> ", conf));\n"
-      <> "}\n"
+  genEventSource req = "\n"
+    <> fname <> " = function(" <> argsStr <> ")\n"
+    <> "{\n"
+    <> "  return (new EventSource("
+    <> url
+    <> ", conf));\n"
+    <> "}\n"
    where
     argsStr = T.intercalate ", " args
     args = captures
