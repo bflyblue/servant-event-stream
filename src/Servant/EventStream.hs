@@ -101,9 +101,7 @@ jsForAPI p = gen
     , fname <> " = function(" <> argsStr <> ")"
     , "{"
     , "  s = new EventSource(" <> url <> ", conf);"
-    , "  eventListeners.forEach(function (ev, cb) {"
-    , "    s.addEventListener(ev, cb);"
-    , "  });"
+    , "  Object.entries(eventListeners).forEach(([ev, cb]) => s.addEventListener(ev, cb));"
     , "  return s;"
     , "}"
     ]
