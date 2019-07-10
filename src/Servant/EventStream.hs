@@ -46,13 +46,13 @@ newtype ServerSentEvents
   deriving (Generic, HasLink)
 
 instance HasServer ServerSentEvents context where
-  type ServerT ServerSentEvents m = ServerT (StreamGet NoFraming EventStream EventSource) m
+  type ServerT ServerSentEvents m = ServerT (StreamGet NoFraming EventStream EventSourceHdr) m
   route Proxy = route
-    (Proxy :: Proxy (StreamGet NoFraming EventStream EventSource))
+    (Proxy :: Proxy (StreamGet NoFraming EventStream EventSourceHdr))
   hoistServerWithContext Proxy = hoistServerWithContext
-    (Proxy :: Proxy (StreamGet NoFraming EventStream EventSource))
+    (Proxy :: Proxy (StreamGet NoFraming EventStream EventSourceHdr))
 
-instance  (HasForeignType lang ftype EventSource)
+instance  (HasForeignType lang ftype EventSourceHdr)
   => HasForeign lang ftype ServerSentEvents where
   type Foreign ftype ServerSentEvents = Req ftype
 
@@ -62,7 +62,7 @@ instance  (HasForeignType lang ftype EventSource)
       &  reqMethod .~ method
       &  reqReturnType ?~ retType
    where
-    retType = typeFor lang (Proxy :: Proxy ftype) (Proxy :: Proxy EventSource)
+    retType = typeFor lang (Proxy :: Proxy ftype) (Proxy :: Proxy EventSourceHdr)
     method  = reflectMethod (Proxy :: Proxy 'GET)
 
 data EventStream
