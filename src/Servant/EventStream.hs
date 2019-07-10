@@ -96,19 +96,20 @@ jsForAPI p = gen
   gen = mconcat . map genEventSource
 
   genEventSource :: Req NoContent -> Text
-  genEventSource req =
-    fname
-      <> " = function(" <> argsStr <> ")\n"
-      <> "{\n"
-      <> "  return (new EventSource("
-      <> url
-      <> ", conf));\n"
-      <> "}\n"
+  genEventSource req = T.unlines
+    [ ""
+    , fname <> " = function(" <> argsStr <> ")"
+    , "{"
+    , "  s = new EventSource(" <> url <> ", conf);"
+    , "  Object.entries(eventListeners).forEach(([ev, cb]) => s.addEventListener(ev, cb));"
+    , "  return s;"
+    , "}"
+    ]
    where
     argsStr = T.intercalate ", " args
     args = captures
         ++ map (view $ queryArgName . argPath) queryparams
-        ++ ["conf"]
+        ++ ["eventListeners = {}", "conf"]
 
     captures = map (view argPath . captureArg)
               . filter isCapture
