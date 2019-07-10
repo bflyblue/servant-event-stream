@@ -41,7 +41,7 @@ import           Servant.JS.Internal
 import           Servant.Pipes                  ( pipesToSourceIO )
 
 newtype ServerSentEvents
-  = ServerSentEvents (StreamGet NoFraming EventStream (Headers '[Header "X-Accel-Buffering" Text] EventSource))
+  = ServerSentEvents (StreamGet NoFraming EventStream EventSourceHdr)
   deriving (Generic, HasLink)
 
 instance HasServer ServerSentEvents context where
@@ -71,10 +71,12 @@ instance Accept EventStream where
 
 type EventSource = SourceIO ServerEvent
 
+type EventSourceHdr = Headers '[Header "X-Accel-Buffering" Text] EventSource
+
 instance MimeRender EventStream ServerEvent where
   mimeRender _ = maybe "" toLazyByteString . eventToBuilder
 
-eventSource :: Pipes.Proxy X () () ServerEvent IO () -> Headers '[Header "X-Accel-Buffering" Text] EventSource
+eventSource :: Pipes.Proxy X () () ServerEvent IO () -> EventSourceHdr
 eventSource prod = addHeader "no" $ pipesToSourceIO (prod >-> yieldUntilClose)
  where
   yieldUntilClose = do
