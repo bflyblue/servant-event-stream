@@ -12,6 +12,7 @@ module Servant.EventStream
   ( ServerSentEvents
   , EventStream
   , EventSource
+  , EventSourceHdr
   , eventSource
   , jsForAPI
   )
