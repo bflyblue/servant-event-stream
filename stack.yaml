@@ -1,8 +1,0 @@
-resolver: lts-13.19
-packages:
-- .
-extra-deps:
-- servant-pipes-0.15
-nix:
-  packages:
-  - zlib

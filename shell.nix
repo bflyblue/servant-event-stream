@@ -1,5 +1,1 @@
-let
-  shellWith = (import ./. {}).servant-event-stream-shell-with;
-  devpkgs = p: [ p.hlint ];
-in
-  shellWith devpkgs
+(import ./servant-event-stream.nix).shell
