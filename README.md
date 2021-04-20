@@ -11,7 +11,6 @@ Dev env is based on [Nix](https://nixos.org) and [Niv](https://github.com/nmatti
 
 To enter the dev shell, run
 ```bash
-
 nix-shell
 ```
 
