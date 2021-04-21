@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                        #-}
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE FlexibleContexts           #-}
@@ -20,6 +21,9 @@ where
 
 import           Control.Lens
 import           Data.Binary.Builder            ( toLazyByteString )
+#if !MIN_VERSION_base(4,11,0)
+import           Data.Semigroup
+#endif
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
 import           GHC.Generics                   ( Generic )
