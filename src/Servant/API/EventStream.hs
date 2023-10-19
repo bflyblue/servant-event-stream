@@ -6,6 +6,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -80,7 +81,7 @@ type EventSource = SourceIO ServerEvent
 {- | This is mostly to guide reverse-proxies like
   <https://www.nginx.com/resources/wiki/start/topics/examples/x-accel/#x-accel-buffering nginx>
 -}
-type EventSourceHdr = Headers '[Header "X-Accel-Buffering" Text] EventSource
+type EventSourceHdr = Headers '[Header "X-Accel-Buffering" Text, Header "Cache-Control" Text] EventSource
 
 {- | See details at
   https://hackage.haskell.org/package/wai-extra-3.1.6/docs/Network-Wai-EventSource-EventStream.html#v:eventToBuilder
@@ -89,4 +90,4 @@ instance MimeRender EventStream ServerEvent where
   mimeRender _ = maybe "" toLazyByteString . eventToBuilder
 
 eventSource :: EventSource -> EventSourceHdr
-eventSource = addHeader "no"
+eventSource = addHeader @"X-Accel-Buffering" "no" . addHeader @"Cache-Control" "no-store"
