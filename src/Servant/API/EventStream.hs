@@ -10,13 +10,12 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Servant.API.EventStream (
-  ServerSentEvents,
-  EventStream,
-  EventSource,
-  EventSourceHdr,
-  eventSource,
   ServerEvent (..),
   ToServerEvent (..),
+  ServerSentEvents,
+  EventStream,
+  RecommendedEventSourceHeaders,
+  recommendedEventSourceHeaders,
 )
 where
 
@@ -58,18 +57,43 @@ instance HasLink (ServerSentEvents a) where
   type MkLink (ServerSentEvents a) r = r
   toLink toA _ = toA
 
-instance (ToServerEvent a) => HasServer (ServerSentEvents a) context where
-  type ServerT (ServerSentEvents a) m = ServerT (StreamGet ServerEventFraming EventStream (EventSourceHdr a)) m
+{- | Event streams are implemented using servant's 'Stream' endpoint.
+  You should provide a handler that returns a stream of events that implements
+  'ToSourceIO' where events have a 'ToServerEvent' instance.
+
+  Example:
+
+  > type MyApi = "books" :> ServerSentEvents (SourceIO Book)
+  >
+  > instance ToServerEvent Book where
+  >   toServerEvent book = ...
+  >
+  > server :: Server MyApi
+  > server = streamBooks
+  >   where streamBooks :: Handler (SourceIO Book)
+            streamBooks = source [book1, ...]
+-}
+instance {-# OVERLAPPABLE #-} (ToServerEvent chunk, ToSourceIO chunk a) => HasServer (ServerSentEvents a) context where
+  type ServerT (ServerSentEvents a) m = ServerT (StreamGet ServerEventFraming EventStream a) m
   route Proxy =
     route
-      (Proxy :: Proxy (StreamGet ServerEventFraming EventStream (EventSourceHdr a)))
+      (Proxy :: Proxy (StreamGet ServerEventFraming EventStream a))
   hoistServerWithContext Proxy =
     hoistServerWithContext
-      (Proxy :: Proxy (StreamGet ServerEventFraming EventStream (EventSourceHdr a)))
+      (Proxy :: Proxy (StreamGet ServerEventFraming EventStream a))
+
+instance {-# OVERLAPPING #-} (ToServerEvent chunk, ToSourceIO chunk a, GetHeaders (Headers h a)) => HasServer (ServerSentEvents (Headers h a)) context where
+  type ServerT (ServerSentEvents (Headers h a)) m = ServerT (StreamGet ServerEventFraming EventStream (Headers h a)) m
+  route Proxy =
+    route
+      (Proxy :: Proxy (StreamGet ServerEventFraming EventStream (Headers h a)))
+  hoistServerWithContext Proxy =
+    hoistServerWithContext
+      (Proxy :: Proxy (StreamGet ServerEventFraming EventStream (Headers h a)))
 
 -- | a helper instance for <https://hackage.haskell.org/package/servant-foreign-0.15.3/docs/Servant-Foreign.html servant-foreign>
 instance
-  (HasForeignType lang ftype (EventSourceHdr a)) =>
+  (HasForeignType lang ftype a) =>
   HasForeign lang ftype (ServerSentEvents a)
   where
   type Foreign ftype (ServerSentEvents a) = Req ftype
@@ -80,7 +104,7 @@ instance
       & reqMethod .~ method
       & reqReturnType ?~ retType
    where
-    retType = typeFor lang (Proxy :: Proxy ftype) (Proxy :: Proxy (EventSourceHdr a))
+    retType = typeFor lang (Proxy :: Proxy ftype) (Proxy :: Proxy a)
     method = reflectMethod (Proxy :: Proxy 'GET)
 
 {- | A type representation of an event stream. It's responsible for setting proper content-type
@@ -92,12 +116,18 @@ data EventStream
 instance Accept EventStream where
   contentType _ = "text" // "event-stream" /: ("charset", "utf-8")
 
-type EventSource a = SourceIO a
-
 {- | This is mostly to guide reverse-proxies like
   <https://www.nginx.com/resources/wiki/start/topics/examples/x-accel/#x-accel-buffering nginx>
 -}
-type EventSourceHdr (a :: Type) = Headers '[Header "X-Accel-Buffering" Text, Header "Cache-Control" Text] (EventSource a)
+type RecommendedEventSourceHeaders (a :: Type) = Headers '[Header "X-Accel-Buffering" Text, Header "Cache-Control" Text] a
+
+recommendedEventSourceHeaders :: a -> RecommendedEventSourceHeaders a
+recommendedEventSourceHeaders = addHeader @"X-Accel-Buffering" "no" . addHeader @"Cache-Control" "no-store"
+
+data ServerEventFraming
+
+instance FramingRender ServerEventFraming where
+  framingRender _ f = fmap (\x -> f x <> "\n")
 
 {- | See details at
   https://hackage.haskell.org/package/wai-extra-3.1.6/docs/Network-Wai-EventSource-EventStream.html#v:eventToBuilder
@@ -123,11 +153,3 @@ encodeServerEvent e =
 
   -- discard CR and split LFs into multiple data values
   safelines = C8.lines . C8.filter (/= '\r')
-
-eventSource :: EventSource a -> EventSourceHdr a
-eventSource = addHeader @"X-Accel-Buffering" "no" . addHeader @"Cache-Control" "no-store"
-
-data ServerEventFraming
-
-instance FramingRender ServerEventFraming where
-  framingRender _ f = fmap (\x -> f x <> "\n")
