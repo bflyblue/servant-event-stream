@@ -4,7 +4,9 @@
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE PolyKinds                  #-}
+{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE UndecidableInstances       #-}
@@ -16,15 +18,29 @@ module Servant.API.EventStream
   , EventSourceHdr
   , eventSource
   , jsForAPI
+
+  -- * General utilities
+  , renderServerEvent
+  , builderToText
+
+  -- * Parsing event streams
+  , serverEventParser
   )
 where
 
+import           Control.Applicative
 import           Control.Lens
+import qualified Data.Attoparsec.ByteString     as A
+import qualified Data.Attoparsec.ByteString.Char8 as A8
 import           Data.Binary.Builder            ( toLazyByteString )
+import qualified Data.Binary.Builder            as B
+import qualified Data.ByteString.Char8          as C8
+import qualified Data.ByteString.Lazy.Char8     as BSL8
 #if !MIN_VERSION_base(4,11,0)
 import           Data.Semigroup
 #endif
 import           Data.Text                      ( Text )
+import           Data.Word
 import qualified Data.Text                     as T
 import           GHC.Generics                   ( Generic )
 import           Network.HTTP.Media             ( (//)
@@ -44,6 +60,8 @@ import           Servant.Foreign
 import           Servant.Foreign.Internal       ( _FunctionName )
 import           Servant.JS.Internal
 import           Servant.Pipes                  ( pipesToSourceIO )
+import qualified Data.ByteString.Builder as BL
+import qualified Data.ByteString.Lazy.Char8 as C8L
 
 newtype ServerSentEvents
   = ServerSentEvents (StreamGet NoFraming EventStream EventSourceHdr)
@@ -55,6 +73,60 @@ instance HasServer ServerSentEvents context where
     (Proxy :: Proxy (StreamGet NoFraming EventStream EventSourceHdr))
   hoistServerWithContext Proxy = hoistServerWithContext
     (Proxy :: Proxy (StreamGet NoFraming EventStream EventSourceHdr))
+
+-- | A 'ServerEvent' parser that tries to follow the W3C spec available
+-- [here](https://html.spec.whatwg.org/multipage/server-sent-events.html#server-sent-events).
+serverEventParser :: A.Parser ServerEvent
+serverEventParser = do
+  eventName <- optional eventNameParser
+  eventData <- A8.sepBy eventDataParser (A8.skipMany (A.word8 newline))
+  eventId   <- optional eventIdParser
+  pure $ ServerEvent{..}
+
+  where
+    comma :: Word8
+    comma = 58
+
+    newline :: Word8
+    newline = 10
+
+    skipNewline :: A.Parser ()
+    skipNewline = A.word8 newline *> pure ()
+
+    eventFieldParser :: A.Parser C8.ByteString
+    eventFieldParser = do
+      field <- A.takeWhile ((/=) comma)
+      _     <- A.word8 comma
+      A8.skipSpace
+      pure field
+
+    eventNameParser :: A.Parser B.Builder
+    eventNameParser = do
+      field <- eventFieldParser
+      -- Parse the event name
+      case field of
+        "event" -> B.fromByteString <$> (A.takeWhile ((/=) newline) <* skipNewline)
+        _       -> fail "eventNameParser"
+
+    eventIdParser :: A.Parser B.Builder
+    eventIdParser = do
+      field <- eventFieldParser
+      -- Parse the event id
+      case field of
+        "id" -> B.fromByteString <$> (A.takeWhile ((/=) newline) <* skipNewline)
+        _    -> fail "eventIdParser"
+
+    eventDataParser :: A.Parser B.Builder
+    eventDataParser = do
+      field <- eventFieldParser
+      case field of
+        "data" -> B.fromByteString <$> (A.takeWhile ((/=) newline) <* skipNewline)
+        _      -> fail "eventDataParser"
+
+
+
+instance MimeUnrender EventStream ServerEvent where
+  mimeUnrender _ bs = A.parseOnly serverEventParser (BSL8.toStrict bs)
 
 -- | a helper instance for <https://hackage.haskell.org/package/servant-foreign-0.15.3/docs/Servant-Foreign.html servant-foreign>
 instance  (HasForeignType lang ftype EventSourceHdr)
@@ -136,3 +208,17 @@ jsForAPI p = gen
     url     = if url' == "'" then "'/'" else url'
     url'    = "'" <> urlArgs
     urlArgs = jsSegments $ req ^.. reqUrl . path . traverse
+
+renderServerEvent :: ServerEvent -> T.Text
+renderServerEvent = \case
+  ServerEvent{..} ->
+    let nm  = maybe "unnamed" builderToText eventName
+        eid = maybe "no-id"   builderToText eventId
+        bdy = T.intercalate "," (map builderToText eventData)
+        in "ServerEvent<" <> nm <> "," <> eid <> ",[" <> bdy <> "]>"
+  CommentEvent cmt -> "CommentEvent<" <> builderToText cmt <> ">"
+  RetryEvent rtr   -> "RetryEvent<" <> T.pack (show rtr) <> ">"
+  CloseEvent       -> "CloseEvent"
+
+builderToText :: BL.Builder -> T.Text
+builderToText = T.pack . C8L.unpack . BL.toLazyByteString
