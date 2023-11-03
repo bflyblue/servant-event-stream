@@ -89,6 +89,7 @@ test-suite tests-default
     , base
     , bytestring
     , hspec
+    , HUnit
     , servant-event-stream
     , text
     , wai-extra

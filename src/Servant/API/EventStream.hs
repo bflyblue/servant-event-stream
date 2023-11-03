@@ -62,6 +62,7 @@ import           Servant.JS.Internal
 import           Servant.Pipes                  ( pipesToSourceIO )
 import qualified Data.ByteString.Builder as BL
 import qualified Data.ByteString.Lazy.Char8 as C8L
+import qualified Data.Attoparsec.Combinator as A
 
 newtype ServerSentEvents
   = ServerSentEvents (StreamGet NoFraming EventStream EventSourceHdr)
@@ -78,14 +79,31 @@ instance HasServer ServerSentEvents context where
 -- [here](https://html.spec.whatwg.org/multipage/server-sent-events.html#server-sent-events).
 serverEventParser :: A.Parser ServerEvent
 serverEventParser = do
+
+  -- Technically speaking, the server is not required to send clean \"packets\", but it
+  -- might buffer and send us multiple parts of the \"data\" fragment. In other words, we
+  -- might receive the initial \"data:\" field in one packet, and the rest in another, so
+  -- we have to premptively try to handling this case.
+
+  mb_field <- A.lookAhead (optional eventFieldParser)
+  previousFrameLeftover <- case mb_field of
+    Just "event" -> pure mempty
+    Just "data"  -> pure mempty
+    Just "id"    -> pure mempty
+    _ -> C8.pack <$> (A.manyTill A8.anyChar (frameSeparator <|> A.endOfInput))
+
   eventName <- optional eventNameParser
-  eventData <- A8.sepBy eventDataParser (A8.skipMany (A.word8 newline))
+  eventData <- addInitialFragment previousFrameLeftover
+                 <$> A8.sepBy eventDataParser frameSeparator
   eventId   <- optional eventIdParser
   pure $ ServerEvent{..}
 
   where
-    comma :: Word8
-    comma = 58
+    colon :: Word8
+    colon = 58
+
+    addInitialFragment :: C8.ByteString -> [BL.Builder] -> [BL.Builder]
+    addInitialFragment d bs = if C8.null d then bs else B.fromByteString d : bs
 
     newline :: Word8
     newline = 10
@@ -93,10 +111,13 @@ serverEventParser = do
     skipNewline :: A.Parser ()
     skipNewline = A.word8 newline *> pure ()
 
+    frameSeparator :: A.Parser ()
+    frameSeparator = skipNewline >> skipNewline
+
     eventFieldParser :: A.Parser C8.ByteString
     eventFieldParser = do
-      field <- A.takeWhile ((/=) comma)
-      _     <- A.word8 comma
+      field <- A.takeWhile ((/=) colon)
+      _     <- A.word8 colon
       A8.skipSpace
       pure field
 
@@ -120,13 +141,14 @@ serverEventParser = do
     eventDataParser = do
       field <- eventFieldParser
       case field of
-        "data" -> B.fromByteString <$> (A.takeWhile ((/=) newline) <* skipNewline)
+        "data" -> B.fromByteString <$> A.takeWhile ((/=) newline)
         _      -> fail "eventDataParser"
 
 
 
 instance MimeUnrender EventStream ServerEvent where
-  mimeUnrender _ bs = A.parseOnly serverEventParser (BSL8.toStrict bs)
+  mimeUnrender _ bs = do
+    A.parseOnly serverEventParser (BSL8.toStrict bs)
 
 -- | a helper instance for <https://hackage.haskell.org/package/servant-foreign-0.15.3/docs/Servant-Foreign.html servant-foreign>
 instance  (HasForeignType lang ftype EventSourceHdr)
