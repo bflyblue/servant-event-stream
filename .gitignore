@@ -2,5 +2,6 @@ dist/
 dist-newstyle/
 .ghc.environment.*
 .stack-work/
+.direnv/
 # nix results
 result
