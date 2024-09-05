@@ -14,7 +14,7 @@ license:            BSD3
 license-file:       LICENSE
 author:             Shaun Sharples
 maintainer:         shaun.sharples@gmail.com
-copyright:          (c) 2023 Shaun Sharples
+copyright:          (c) 2024 Shaun Sharples
 build-type:         Simple
 extra-source-files:
   CHANGELOG.md
@@ -31,10 +31,10 @@ library
     OverloadedStrings
 
   build-depends:
-      base             >=4.10     && <4.19
+      base             >=4.10     && <4.20
     , bytestring       >=0.11.1.0 && <0.13
     , http-media       >=0.7.1.3  && <0.9
-    , lens             >=4.17     && <5.3
+    , lens             >=4.17     && <5.4
     , servant-foreign  >=0.15     && <0.17
     , servant-server   >=0.15     && <0.21
     , text             >=1.2.3    && <2.2
