@@ -85,7 +85,7 @@ instance ToServerEvent ServerEvent where
   > server :: Server MyApi
   > server = streamBooks
   >   where streamBooks :: Handler (SourceIO Book)
-            streamBooks = pure $ source [book1, ...]
+  >         streamBooks = pure $ source [book1, ...]
 -}
 instance {-# OVERLAPPABLE #-} (ToServerEvent chunk, ToSourceIO chunk a) => HasServer (ServerSentEvents a) context where
   type ServerT (ServerSentEvents a) m = ServerT (StreamGet ServerEventFraming EventStream a) m
@@ -140,7 +140,7 @@ instance Accept EventStream where
   > server :: Server MyApi
   > server = streamBooks
   >   where streamBooks :: Handler (RecommendedEventSourceHeaders (SourceIO Book))
-            streamBooks = pure $ recommendedEventSourceHeaders $ source [book1, ...]
+  >         streamBooks = pure $ recommendedEventSourceHeaders $ source [book1, ...]
 -}
 type RecommendedEventSourceHeaders (a :: Type) = Headers '[Header "X-Accel-Buffering" Text, Header "Cache-Control" Text] a
 

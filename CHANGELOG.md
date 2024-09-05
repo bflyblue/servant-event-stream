@@ -18,7 +18,7 @@
     > server :: Server MyApi
     > server = streamBooks
     >   where streamBooks :: Handler (SourceIO Book)
-              streamBooks = pure $ source [book1, ...]
+    >         streamBooks = pure $ source [book1, ...]
 
 ## 0.2.1.0 -- 2021-04-21
 
