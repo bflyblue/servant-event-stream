@@ -22,10 +22,10 @@ where
 import Control.Lens
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Lazy.Char8 as C8
+import Data.Kind (Type)
 #if !MIN_VERSION_base(4,11,0)
 import Data.Semigroup
 #endif
-import Data.Kind (Type)
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -37,16 +37,6 @@ import Servant
 import Servant.Foreign
 import Servant.Foreign.Internal (_FunctionName)
 
-data ServerEvent = ServerEvent
-  { eventType :: Maybe LBS.ByteString
-  , eventId :: Maybe LBS.ByteString
-  , eventData :: LBS.ByteString
-  }
-  deriving (Show, Eq, Generic)
-
-class ToServerEvent a where
-  toServerEvent :: a -> ServerEvent
-
 {- | A ServerSentEvents endpoint emits an event stream using the format described at
   <https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#event_stream_format>
 -}
@@ -56,6 +46,30 @@ data ServerSentEvents (a :: Type)
 instance HasLink (ServerSentEvents a) where
   type MkLink (ServerSentEvents a) r = r
   toLink toA _ = toA
+
+-- | Represents an event sent from the server to the client in Server-Sent Events (SSE).
+data ServerEvent = ServerEvent
+  { eventType :: !(Maybe LBS.ByteString)
+  -- ^ Optional field specifying the type of event. Can be used to distinguish between different kinds of events.
+  , eventId :: !(Maybe LBS.ByteString)
+  -- ^ Optional field providing an identifier for the event. Useful for clients to keep track of the last received event.
+  , eventData :: !LBS.ByteString
+  -- ^ The payload or content of the event. This is the main data sent to the client.
+  }
+  deriving (Show, Eq, Generic)
+
+{- | This typeclass allows you to define custom event types that can be
+  transformed into the 'ServerEvent' type, which is used to represent events in
+  the Server-Sent Events (SSE) protocol.
+-}
+class ToServerEvent a where
+  toServerEvent :: a -> ServerEvent
+
+instance (ToServerEvent a) => MimeRender EventStream a where
+  mimeRender _ = encodeServerEvent . toServerEvent
+
+instance ToServerEvent ServerEvent where
+  toServerEvent = id
 
 {- | Event streams are implemented using servant's 'Stream' endpoint.
   You should provide a handler that returns a stream of events that implements
@@ -71,7 +85,7 @@ instance HasLink (ServerSentEvents a) where
   > server :: Server MyApi
   > server = streamBooks
   >   where streamBooks :: Handler (SourceIO Book)
-            streamBooks = source [book1, ...]
+            streamBooks = pure $ source [book1, ...]
 -}
 instance {-# OVERLAPPABLE #-} (ToServerEvent chunk, ToSourceIO chunk a) => HasServer (ServerSentEvents a) context where
   type ServerT (ServerSentEvents a) m = ServerT (StreamGet ServerEventFraming EventStream a) m
@@ -118,9 +132,19 @@ instance Accept EventStream where
 
 {- | This is mostly to guide reverse-proxies like
   <https://www.nginx.com/resources/wiki/start/topics/examples/x-accel/#x-accel-buffering nginx>
+
+  Example:
+
+  > type MyApi = "books" :> ServerSentEvents (RecommendedEventSourceHeaders (SourceIO Book))
+  >
+  > server :: Server MyApi
+  > server = streamBooks
+  >   where streamBooks :: Handler (RecommendedEventSourceHeaders (SourceIO Book))
+            streamBooks = pure $ recommendedEventSourceHeaders $ source [book1, ...]
 -}
 type RecommendedEventSourceHeaders (a :: Type) = Headers '[Header "X-Accel-Buffering" Text, Header "Cache-Control" Text] a
 
+-- | Add the recommended headers for Server-Sent Events to the response.
 recommendedEventSourceHeaders :: a -> RecommendedEventSourceHeaders a
 recommendedEventSourceHeaders = addHeader @"X-Accel-Buffering" "no" . addHeader @"Cache-Control" "no-store"
 
@@ -128,15 +152,6 @@ data ServerEventFraming
 
 instance FramingRender ServerEventFraming where
   framingRender _ f = fmap (\x -> f x <> "\n")
-
-{- | See details at
-  https://hackage.haskell.org/package/wai-extra-3.1.6/docs/Network-Wai-EventSource-EventStream.html#v:eventToBuilder
--}
-instance (ToServerEvent a) => MimeRender EventStream a where
-  mimeRender _ = encodeServerEvent . toServerEvent
-
-instance ToServerEvent ServerEvent where
-  toServerEvent = id
 
 {- 1. Field names must not contain LF, CR or COLON characters.
    2. Values must not contain LF or CR characters.
