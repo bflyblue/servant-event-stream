@@ -9,11 +9,49 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+{- |
+Module: Servant.API.EventStream
+Description: Server Sent Events for Servant Streams
+Copyright: (c) 2024 Shaun Sharples
+License: BSD3
+Stability: alpha
+-}
 module Servant.API.EventStream (
+  -- * Server-Sent Events
+
+  -- | Event streams are implemented using servant's 'Stream' endpoint.
+  -- You should provide a handler that returns a stream of events that implements
+  -- 'ToSourceIO' where events have a 'ToServerEvent' instance.
+  --
+  -- Example:
+  --
+  -- > type MyApi = "books" :> ServerSentEvents (SourceIO Book)
+  -- >
+  -- > instance ToServerEvent Book where
+  -- >   toServerEvent book = ...
+  -- >
+  -- > server :: Server MyApi
+  -- > server = streamBooks
+  -- >   where streamBooks :: Handler (SourceIO Book)
+  -- >         streamBooks = pure $ source [book1, ...]
   ServerEvent (..),
   ToServerEvent (..),
   ServerSentEvents,
   EventStream,
+
+  -- * Recommended headers for Server-Sent Events
+
+  -- | This is mostly to guide reverse-proxies like
+  --   <https://www.nginx.com/resources/wiki/start/topics/examples/x-accel/#x-accel-buffering nginx>.
+  --
+  --   Example:
+  --
+  --   > type MyApi = "books" :> ServerSentEvents (RecommendedEventSourceHeaders (SourceIO Book))
+  --   >
+  --   > server :: Server MyApi
+  --   > server = streamBooks
+  --   >   where streamBooks :: Handler (RecommendedEventSourceHeaders (SourceIO Book))
+  --   >         streamBooks = pure $ recommendedEventSourceHeaders $ source [book1, ...]
   RecommendedEventSourceHeaders,
   recommendedEventSourceHeaders,
 )
@@ -29,10 +67,7 @@ import Data.Semigroup
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
-import Network.HTTP.Media (
-  (//),
-  (/:),
- )
+import Network.HTTP.Media ((//), (/:))
 import Servant
 import Servant.Foreign
 import Servant.Foreign.Internal (_FunctionName)
@@ -59,7 +94,7 @@ data ServerEvent = ServerEvent
   deriving (Show, Eq, Generic)
 
 {- | This typeclass allows you to define custom event types that can be
-  transformed into the 'ServerEvent' type, which is used to represent events in
+  transformed into the t'ServerEvent' type, which is used to represent events in
   the Server-Sent Events (SSE) protocol.
 -}
 class ToServerEvent a where
@@ -68,25 +103,27 @@ class ToServerEvent a where
 instance (ToServerEvent a) => MimeRender EventStream a where
   mimeRender _ = encodeServerEvent . toServerEvent
 
+{- 1. Field names must not contain LF, CR or COLON characters.
+   2. Values must not contain LF or CR characters.
+      Multple consecutive `data:` fields will be joined with LFs on the client.
+-}
+
+-- | Encodes a t'ServerEvent' into a 'LBS.ByteString' that can be sent to the client.
+encodeServerEvent :: ServerEvent -> LBS.ByteString
+encodeServerEvent e =
+  optional "event:" (eventType e)
+    <> optional "id:" (eventId e)
+    <> mconcat (map (field "data:") (safelines (eventData e)))
+ where
+  optional name = maybe mempty (field name)
+  field name val = name <> val <> "\n"
+
+  -- discard CR and split LFs into multiple data values
+  safelines = C8.lines . C8.filter (/= '\r')
+
 instance ToServerEvent ServerEvent where
   toServerEvent = id
 
-{- | Event streams are implemented using servant's 'Stream' endpoint.
-  You should provide a handler that returns a stream of events that implements
-  'ToSourceIO' where events have a 'ToServerEvent' instance.
-
-  Example:
-
-  > type MyApi = "books" :> ServerSentEvents (SourceIO Book)
-  >
-  > instance ToServerEvent Book where
-  >   toServerEvent book = ...
-  >
-  > server :: Server MyApi
-  > server = streamBooks
-  >   where streamBooks :: Handler (SourceIO Book)
-  >         streamBooks = pure $ source [book1, ...]
--}
 instance {-# OVERLAPPABLE #-} (ToServerEvent chunk, ToSourceIO chunk a) => HasServer (ServerSentEvents a) context where
   type ServerT (ServerSentEvents a) m = ServerT (StreamGet ServerEventFraming EventStream a) m
   route Proxy =
@@ -130,41 +167,16 @@ data EventStream
 instance Accept EventStream where
   contentType _ = "text" // "event-stream" /: ("charset", "utf-8")
 
-{- | This is mostly to guide reverse-proxies like
-  <https://www.nginx.com/resources/wiki/start/topics/examples/x-accel/#x-accel-buffering nginx>
-
-  Example:
-
-  > type MyApi = "books" :> ServerSentEvents (RecommendedEventSourceHeaders (SourceIO Book))
-  >
-  > server :: Server MyApi
-  > server = streamBooks
-  >   where streamBooks :: Handler (RecommendedEventSourceHeaders (SourceIO Book))
-  >         streamBooks = pure $ recommendedEventSourceHeaders $ source [book1, ...]
--}
+-- | Recommended headers for Server-Sent Events.
 type RecommendedEventSourceHeaders (a :: Type) = Headers '[Header "X-Accel-Buffering" Text, Header "Cache-Control" Text] a
 
 -- | Add the recommended headers for Server-Sent Events to the response.
 recommendedEventSourceHeaders :: a -> RecommendedEventSourceHeaders a
 recommendedEventSourceHeaders = addHeader @"X-Accel-Buffering" "no" . addHeader @"Cache-Control" "no-store"
 
+-- | A framing strategy for Server-Sent Events.
 data ServerEventFraming
 
+-- | Frames the server events by joining chunks with a newline.
 instance FramingRender ServerEventFraming where
   framingRender _ f = fmap (\x -> f x <> "\n")
-
-{- 1. Field names must not contain LF, CR or COLON characters.
-   2. Values must not contain LF or CR characters.
-      Multple consecutive `data:` fields will be joined with LFs on the client.
--}
-encodeServerEvent :: ServerEvent -> LBS.ByteString
-encodeServerEvent e =
-  optional "event:" (eventType e)
-    <> optional "id:" (eventId e)
-    <> mconcat (map (field "data:") (safelines (eventData e)))
- where
-  optional name = maybe mempty (field name)
-  field name val = name <> val <> "\n"
-
-  -- discard CR and split LFs into multiple data values
-  safelines = C8.lines . C8.filter (/= '\r')
