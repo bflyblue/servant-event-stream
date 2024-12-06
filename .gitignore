@@ -5,3 +5,4 @@ dist-newstyle/
 .direnv/
 # nix results
 result
+haddocks
