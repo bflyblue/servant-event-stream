@@ -71,9 +71,9 @@ import Data.Text.Encoding (decodeUtf8', encodeUtf8)
 #if !MIN_VERSION_base(4,11,0)
 import Data.Semigroup
 #endif
+import Data.List (foldl')
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Data.List (foldl')
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Network.HTTP.Media ((//), (/:))
@@ -114,8 +114,9 @@ class ToServerEvent a where
 instance (ToServerEvent a) => MimeRender EventStream a where
   mimeRender _ = encodeServerEvent . toServerEvent
 
--- | This typeclass allow you to define custom event types that can be interpreted
--- from a t'ServerEvent' type.
+{- | This typeclass allow you to define custom event types that can be interpreted
+from a t'ServerEvent' type.
+-}
 class FromServerEvent a where
   fromServerEvent :: ServerEvent -> Either String a
 
@@ -133,12 +134,12 @@ encodeServerEvent e =
   optional "event:" (eventType e)
     <> optional "id:" (eventId e)
     <> mconcat (map (field "data:") (safelines (eventData e)))
-  where
-    optional name = maybe mempty (field name)
-    field name val = name <> LBS.fromStrict (encodeUtf8 val) <> "\n"
+ where
+  optional name = maybe mempty (field name)
+  field name val = name <> LBS.fromStrict (encodeUtf8 val) <> "\n"
 
-    -- discard CR and split LFs into multiple data values
-    safelines = Text.lines . Text.filter (/= '\r')
+  -- discard CR and split LFs into multiple data values
+  safelines = Text.lines . Text.filter (/= '\r')
 
 newline :: AT.Parser Text
 newline = AT.choice [AT.string "\r\n", AT.string "\n", AT.string "\r"]
@@ -147,13 +148,13 @@ updateServerEvent :: ServerEvent -> Text -> Text -> ServerEvent
 updateServerEvent event field value =
   case field of
     "event" ->
-      event {eventType = Just value}
+      event{eventType = Just value}
     "data" ->
-      event {eventData = eventData event <> value <> "\n"}
+      event{eventData = eventData event <> value <> "\n"}
     "id" ->
       if Text.any (== '\0') value
         then event
-        else event {eventId = Just value}
+        else event{eventId = Just value}
     _ ->
       event
 
@@ -177,7 +178,7 @@ decodeServerEvent bs = do
                   else Text.drop 1 value
            in updateServerEvent event field trimmedValue
       )
-      (ServerEvent {eventType = Nothing, eventId = Nothing, eventData = ""})
+      (ServerEvent{eventType = Nothing, eventId = Nothing, eventData = ""})
       ls
 
 instance ToServerEvent ServerEvent where
