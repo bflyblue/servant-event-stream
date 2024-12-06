@@ -1,5 +1,17 @@
 # Revision history for servant-event-stream
 
+## 0.4.0.0 -- 2024-12-06 (in progress)
+
+* Support decoding of Server-Sent Events using a `FromServerEvent` typeclass.
+
+* Breaking changes to `ServerEvent`.
+
+    Fields have changed from Lazy ByteString to Text to align more closely with
+    the [specification](https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation)
+    which explicitly specify that streams *must* be UTF-8. It wasn't that
+    important for encoding but it makes more sense to fix this discrepancy now
+    that decoding support is added.
+
 ## 0.3.0.0 -- 2024-09-05
 
 * Breaking changes to the API.
