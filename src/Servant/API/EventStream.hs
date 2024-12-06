@@ -60,7 +60,7 @@ module Servant.API.EventStream (
 where
 
 import Control.Applicative ((<|>))
-import Control.Lens
+import Control.Lens ((%~), (&), (.~), (?~))
 import Control.Monad ((<=<))
 import qualified Data.Attoparsec.ByteString as AB
 import qualified Data.Attoparsec.Text as AT
@@ -77,8 +77,32 @@ import qualified Data.Text as Text
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Network.HTTP.Media ((//), (/:))
-import Servant
-import Servant.Foreign
+import Servant (
+  Accept (contentType),
+  FramingRender (..),
+  FramingUnrender (..),
+  GetHeaders,
+  HasLink (..),
+  HasServer (..),
+  Header,
+  Headers,
+  MimeRender (mimeRender),
+  MimeUnrender (mimeUnrender),
+  Proxy (..),
+  StdMethod (GET),
+  StreamGet,
+  ToSourceIO,
+  addHeader,
+  reflectMethod,
+ )
+import Servant.Foreign (
+  HasForeign (..),
+  HasForeignType (..),
+  Req,
+  reqFuncName,
+  reqMethod,
+  reqReturnType,
+ )
 import Servant.Foreign.Internal (_FunctionName)
 import Servant.Types.SourceT (transformWithAtto)
 import Prelude
