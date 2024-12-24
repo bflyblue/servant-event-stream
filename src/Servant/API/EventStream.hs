@@ -59,9 +59,9 @@ module Servant.API.EventStream (
 )
 where
 
-import Control.Applicative ((<|>))
+import Control.Applicative (optional, (<|>))
 import Control.Lens ((%~), (&), (.~), (?~))
-import Control.Monad ((<=<))
+import Control.Monad (void, (<=<))
 import qualified Data.Attoparsec.ByteString as AB
 import qualified Data.Attoparsec.Text as AT
 import qualified Data.ByteString as BS
@@ -71,6 +71,7 @@ import Data.Text.Encoding (decodeUtf8', encodeUtf8)
 #if !MIN_VERSION_base(4,11,0)
 import Data.Semigroup
 #endif
+import Data.Bifunctor (first)
 import Data.List (foldl')
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -155,18 +156,15 @@ instance (FromServerEvent a) => MimeUnrender EventStream a where
 -- | Encodes a t'ServerEvent' into a 'LBS.ByteString' that can be sent to the client.
 encodeServerEvent :: ServerEvent -> LBS.ByteString
 encodeServerEvent e =
-  optional "event:" (eventType e)
-    <> optional "id:" (eventId e)
+  optionalField "event:" (eventType e)
+    <> optionalField "id:" (eventId e)
     <> mconcat (map (field "data:") (safelines (eventData e)))
  where
-  optional name = maybe mempty (field name)
+  optionalField name = maybe mempty (field name)
   field name val = name <> LBS.fromStrict (encodeUtf8 val) <> "\n"
 
   -- discard CR and split LFs into multiple data values
   safelines = Text.lines . Text.filter (/= '\r')
-
-newline :: AT.Parser Text
-newline = AT.choice [AT.string "\r\n", AT.string "\n", AT.string "\r"]
 
 updateServerEvent :: ServerEvent -> Text -> Text -> ServerEvent
 updateServerEvent event field value =
@@ -184,14 +182,9 @@ updateServerEvent event field value =
 
 decodeServerEvent :: LBS.ByteString -> Either String ServerEvent
 decodeServerEvent bs = do
-  decodedText <- case decodeUtf8' (LBS.toStrict bs) of
-    Left err ->
-      Left (show err)
-    Right val ->
-      Right val
+  decodedText <- first show $ decodeUtf8' (LBS.toStrict bs)
+  ls <- AT.parseOnly linesParser decodedText
 
-  let parser = AT.sepBy1 (AT.takeWhile1 (\c -> c /= '\r' && c /= '\n')) newline
-  ls <- AT.parseOnly parser decodedText
   pure $
     foldl'
       ( \event line ->
@@ -204,6 +197,19 @@ decodeServerEvent bs = do
       )
       (ServerEvent{eventType = Nothing, eventId = Nothing, eventData = ""})
       ls
+ where
+  linesParser = AT.many' lineParser
+
+  lineParser = do
+    str <- AT.takeWhile1 (not . AT.isEndOfLine)
+    m <- (Nothing <$ endOfLine) <|> (Just <$> AT.anyChar)
+    case m of
+      Just c -> do
+        str' <- lineParser
+        pure (str <> Text.singleton c <> str')
+      Nothing -> pure str
+
+  endOfLine = void $ AT.char '\n' <|> (AT.char '\r' <* optional (AT.char '\n'))
 
 instance ToServerEvent ServerEvent where
   toServerEvent = id
@@ -270,7 +276,7 @@ newlineBS = AB.choice [AB.string "\r\n", AB.string "\n", AB.string "\r"]
 
 instance FramingUnrender ServerEventFraming where
   framingUnrender _ f = transformWithAtto $ do
-    ws <- AB.manyTill AB.anyWord8 (AB.endOfInput <|> (newlineBS *> newlineBS *> pure ()))
+    ws <- AB.manyTill AB.anyWord8 (AB.endOfInput <|> void (newlineBS >> newlineBS))
     case ws of
       [] -> fail "Unexpected empty frame"
       _ -> either fail pure (f (LBS.pack (ws <> [10])))
