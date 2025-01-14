@@ -72,7 +72,6 @@ import Data.Text.Encoding (decodeUtf8', encodeUtf8)
 import Data.Semigroup
 #endif
 import Data.Bifunctor (first)
-import Data.List (foldl')
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Typeable (Typeable)
@@ -166,50 +165,54 @@ encodeServerEvent e =
   -- discard CR and split LFs into multiple data values
   safelines = Text.lines . Text.filter (/= '\r')
 
-updateServerEvent :: ServerEvent -> Text -> Text -> ServerEvent
-updateServerEvent event field value =
-  case field of
-    "event" ->
-      event{eventType = Just value}
-    "data" ->
-      event{eventData = eventData event <> value <> "\n"}
-    "id" ->
-      if Text.any (== '\0') value
-        then event
-        else event{eventId = Just value}
-    _ ->
-      event
-
 decodeServerEvent :: LBS.ByteString -> Either String ServerEvent
 decodeServerEvent bs = do
   decodedText <- first show $ decodeUtf8' (LBS.toStrict bs)
-  ls <- AT.parseOnly linesParser decodedText
-
-  pure $
-    foldl'
-      ( \event line ->
-          let (field, value) = Text.break (== ':') line
-              trimmedValue =
-                if Text.isPrefixOf ": " value
-                  then Text.drop 2 value
-                  else Text.drop 1 value
-           in updateServerEvent event field trimmedValue
-      )
-      (ServerEvent{eventType = Nothing, eventId = Nothing, eventData = ""})
-      ls
+  f <- AT.parseOnly linesParser decodedText
+  pure $ f emptyEvent
  where
-  linesParser = AT.many' lineParser
+  emptyEvent = ServerEvent{eventType = Nothing, eventId = Nothing, eventData = ""}
+
+  linesParser = foldr (.) id <$> AT.many' lineParser
 
   lineParser = do
-    str <- AT.takeWhile1 (not . AT.isEndOfLine)
-    m <- (Nothing <$ endOfLine) <|> (Just <$> AT.anyChar)
-    case m of
-      Just c -> do
-        str' <- lineParser
-        pure (str <> Text.singleton c <> str')
-      Nothing -> pure str
+    line <- parseLine
+    case line of
+      BlankLine -> pure id
+      CommentLine -> pure id
+      FieldLine field value -> pure $ processField field value
 
-  endOfLine = void $ AT.char '\n' <|> (AT.char '\r' <* optional (AT.char '\n'))
+data Line = BlankLine | CommentLine | FieldLine !Text !Text
+  deriving (Show, Eq)
+
+endOfLine :: AT.Parser ()
+endOfLine = void $ AT.choice [AT.string "\r\n", AT.string "\n", AT.string "\r"]
+
+isEndOfLine :: Char -> Bool
+isEndOfLine '\n' = True
+isEndOfLine '\r' = True
+isEndOfLine _ = False
+
+parseLine :: AT.Parser Line
+parseLine =
+  AT.choice
+    [ BlankLine <$ endOfLine
+    , CommentLine <$ (AT.char ':' >> AT.skipWhile (not . isEndOfLine) >> endOfLine)
+    , FieldLine <$> AT.takeWhile1 (/= ':') <* AT.char ':' <* optional AT.space <*> AT.takeWhile (not . isEndOfLine) <* AT.endOfLine
+    ]
+
+processField :: Text -> Text -> ServerEvent -> ServerEvent
+processField "event" value event = event{eventType = Just value}
+processField "data" value event = event{eventData = eventData event <> value <> "\n"}
+processField "id" value event
+  | Text.any (== '\0') value = event
+  | otherwise = event{eventId = Just value}
+processField _ _ event = event
+
+{- TODO: retry
+  If the field value consists of only ASCII digits, then interpret the field value as an integer in base ten, and set the event stream's reconnection time to that integer. Otherwise, ignore the field.
+  processField "retry" value event = ?
+-}
 
 instance ToServerEvent ServerEvent where
   toServerEvent = id

@@ -45,9 +45,19 @@ library
   default-language: Haskell2010
   ghc-options: -Wall
 
-test-suite tests-default
+test-suite test
   type: exitcode-stdio-1.0
-  main-is: Spec.hs
   hs-source-dirs: tests
+  main-is: Main.hs
   default-language: Haskell2010
-  build-depends: base
+  build-depends:
+    QuickCheck,
+    aeson,
+    base >=4.10 && <4.20,
+    bytestring,
+    servant >=0.15 && <0.21,
+    servant-event-stream,
+    tasty,
+    tasty-hunit,
+    tasty-quickcheck,
+    text >=1.2.3 && <2.2
