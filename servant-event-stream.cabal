@@ -31,10 +31,12 @@ library
     OverloadedStrings
 
   build-depends:
+    attoparsec >=0.13.2.2 && <0.15,
     base >=4.10 && <4.20,
     bytestring >=0.11.1.0 && <0.13,
     http-media >=0.7.1.3 && <0.9,
     lens >=4.17 && <5.4,
+    servant >=0.15 && <0.21,
     servant-foreign >=0.15 && <0.17,
     servant-server >=0.15 && <0.21,
     text >=1.2.3 && <2.2
@@ -43,9 +45,19 @@ library
   default-language: Haskell2010
   ghc-options: -Wall
 
-test-suite tests-default
+test-suite test
   type: exitcode-stdio-1.0
-  main-is: Spec.hs
   hs-source-dirs: tests
+  main-is: Main.hs
   default-language: Haskell2010
-  build-depends: base
+  build-depends:
+    QuickCheck,
+    aeson,
+    base >=4.10 && <4.20,
+    bytestring,
+    servant >=0.15 && <0.21,
+    servant-event-stream,
+    tasty,
+    tasty-hunit,
+    tasty-quickcheck,
+    text >=1.2.3 && <2.2

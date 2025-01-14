@@ -36,8 +36,10 @@ module Servant.API.EventStream (
   -- >         streamBooks = pure $ source [book1, ...]
   ServerEvent (..),
   ToServerEvent (..),
+  FromServerEvent (..),
   ServerSentEvents,
   EventStream,
+  ServerEventFraming,
 
   -- * Recommended headers for Server-Sent Events
 
@@ -57,20 +59,53 @@ module Servant.API.EventStream (
 )
 where
 
-import Control.Lens
+import Control.Applicative (optional, (<|>))
+import Control.Lens ((%~), (&), (.~), (?~))
+import Control.Monad (void, (<=<))
+import qualified Data.Attoparsec.ByteString as AB
+import qualified Data.Attoparsec.Text as AT
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.ByteString.Lazy.Char8 as C8
 import Data.Kind (Type)
+import Data.Text.Encoding (decodeUtf8', encodeUtf8)
 #if !MIN_VERSION_base(4,11,0)
 import Data.Semigroup
 #endif
+import Data.Bifunctor (first)
 import Data.Text (Text)
+import qualified Data.Text as Text
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Network.HTTP.Media ((//), (/:))
-import Servant
-import Servant.Foreign
+import Servant (
+  Accept (contentType),
+  FramingRender (..),
+  FramingUnrender (..),
+  GetHeaders,
+  HasLink (..),
+  HasServer (..),
+  Header,
+  Headers,
+  MimeRender (mimeRender),
+  MimeUnrender (mimeUnrender),
+  Proxy (..),
+  StdMethod (GET),
+  StreamGet,
+  ToSourceIO,
+  addHeader,
+  reflectMethod,
+ )
+import Servant.Foreign (
+  HasForeign (..),
+  HasForeignType (..),
+  Req,
+  reqFuncName,
+  reqMethod,
+  reqReturnType,
+ )
 import Servant.Foreign.Internal (_FunctionName)
+import Servant.Types.SourceT (transformWithAtto)
+import Prelude
 
 {- | A ServerSentEvents endpoint emits an event stream using the format described at
   <https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#event_stream_format>
@@ -84,11 +119,11 @@ instance HasLink (ServerSentEvents a) where
 
 -- | Represents an event sent from the server to the client in Server-Sent Events (SSE).
 data ServerEvent = ServerEvent
-  { eventType :: !(Maybe LBS.ByteString)
+  { eventType :: !(Maybe Text)
   -- ^ Optional field specifying the type of event. Can be used to distinguish between different kinds of events.
-  , eventId :: !(Maybe LBS.ByteString)
+  , eventId :: !(Maybe Text)
   -- ^ Optional field providing an identifier for the event. Useful for clients to keep track of the last received event.
-  , eventData :: !LBS.ByteString
+  , eventData :: !Text
   -- ^ The payload or content of the event. This is the main data sent to the client.
   }
   deriving (Show, Eq, Generic)
@@ -103,6 +138,15 @@ class ToServerEvent a where
 instance (ToServerEvent a) => MimeRender EventStream a where
   mimeRender _ = encodeServerEvent . toServerEvent
 
+{- | This typeclass allow you to define custom event types that can be interpreted
+from a t'ServerEvent' type.
+-}
+class FromServerEvent a where
+  fromServerEvent :: ServerEvent -> Either String a
+
+instance (FromServerEvent a) => MimeUnrender EventStream a where
+  mimeUnrender _ = fromServerEvent <=< decodeServerEvent
+
 {- 1. Field names must not contain LF, CR or COLON characters.
    2. Values must not contain LF or CR characters.
       Multple consecutive `data:` fields will be joined with LFs on the client.
@@ -111,15 +155,64 @@ instance (ToServerEvent a) => MimeRender EventStream a where
 -- | Encodes a t'ServerEvent' into a 'LBS.ByteString' that can be sent to the client.
 encodeServerEvent :: ServerEvent -> LBS.ByteString
 encodeServerEvent e =
-  optional "event:" (eventType e)
-    <> optional "id:" (eventId e)
+  optionalField "event:" (eventType e)
+    <> optionalField "id:" (eventId e)
     <> mconcat (map (field "data:") (safelines (eventData e)))
  where
-  optional name = maybe mempty (field name)
-  field name val = name <> val <> "\n"
+  optionalField name = maybe mempty (field name)
+  field name val = name <> LBS.fromStrict (encodeUtf8 val) <> "\n"
 
   -- discard CR and split LFs into multiple data values
-  safelines = C8.lines . C8.filter (/= '\r')
+  safelines = Text.lines . Text.filter (/= '\r')
+
+decodeServerEvent :: LBS.ByteString -> Either String ServerEvent
+decodeServerEvent bs = do
+  decodedText <- first show $ decodeUtf8' (LBS.toStrict bs)
+  f <- AT.parseOnly linesParser decodedText
+  pure $ f emptyEvent
+ where
+  emptyEvent = ServerEvent{eventType = Nothing, eventId = Nothing, eventData = ""}
+
+  linesParser = foldr (.) id <$> AT.many' lineParser
+
+  lineParser = do
+    line <- parseLine
+    case line of
+      BlankLine -> pure id
+      CommentLine -> pure id
+      FieldLine field value -> pure $ processField field value
+
+data Line = BlankLine | CommentLine | FieldLine !Text !Text
+  deriving (Show, Eq)
+
+endOfLine :: AT.Parser ()
+endOfLine = void $ AT.choice [AT.string "\r\n", AT.string "\n", AT.string "\r"]
+
+isEndOfLine :: Char -> Bool
+isEndOfLine '\n' = True
+isEndOfLine '\r' = True
+isEndOfLine _ = False
+
+parseLine :: AT.Parser Line
+parseLine =
+  AT.choice
+    [ BlankLine <$ endOfLine
+    , CommentLine <$ (AT.char ':' >> AT.skipWhile (not . isEndOfLine) >> endOfLine)
+    , FieldLine <$> AT.takeWhile1 (/= ':') <* AT.char ':' <* optional AT.space <*> AT.takeWhile (not . isEndOfLine) <* AT.endOfLine
+    ]
+
+processField :: Text -> Text -> ServerEvent -> ServerEvent
+processField "event" value event = event{eventType = Just value}
+processField "data" value event = event{eventData = eventData event <> value <> "\n"}
+processField "id" value event
+  | Text.any (== '\0') value = event
+  | otherwise = event{eventId = Just value}
+processField _ _ event = event
+
+{- TODO: retry
+  If the field value consists of only ASCII digits, then interpret the field value as an integer in base ten, and set the event stream's reconnection time to that integer. Otherwise, ignore the field.
+  processField "retry" value event = ?
+-}
 
 instance ToServerEvent ServerEvent where
   toServerEvent = id
@@ -180,3 +273,13 @@ data ServerEventFraming
 -- | Frames the server events by joining chunks with a newline.
 instance FramingRender ServerEventFraming where
   framingRender _ f = fmap (\x -> f x <> "\n")
+
+newlineBS :: AB.Parser BS.ByteString
+newlineBS = AB.choice [AB.string "\r\n", AB.string "\n", AB.string "\r"]
+
+instance FramingUnrender ServerEventFraming where
+  framingUnrender _ f = transformWithAtto $ do
+    ws <- AB.manyTill AB.anyWord8 (AB.endOfInput <|> void (newlineBS >> newlineBS))
+    case ws of
+      [] -> fail "Unexpected empty frame"
+      _ -> either fail pure (f (LBS.pack (ws <> [10])))
