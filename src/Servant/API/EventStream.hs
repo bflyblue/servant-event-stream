@@ -68,9 +68,9 @@ import Data.Text (Text)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Network.HTTP.Media ((//), (/:))
-import Servant
-import Servant.Foreign
-import Servant.Foreign.Internal (_FunctionName)
+import qualified Servant as S
+import qualified Servant.Foreign as S
+import qualified Servant.Foreign.Internal as SFI
 
 {- | A ServerSentEvents endpoint emits an event stream using the format described at
   <https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#event_stream_format>
@@ -78,7 +78,7 @@ import Servant.Foreign.Internal (_FunctionName)
 data ServerSentEvents (a :: Type)
   deriving (Typeable, Generic)
 
-instance HasLink (ServerSentEvents a) where
+instance S.HasLink (ServerSentEvents a) where
   type MkLink (ServerSentEvents a) r = r
   toLink toA _ = toA
 
@@ -100,7 +100,7 @@ data ServerEvent = ServerEvent
 class ToServerEvent a where
   toServerEvent :: a -> ServerEvent
 
-instance (ToServerEvent a) => MimeRender EventStream a where
+instance (ToServerEvent a) => S.MimeRender EventStream a where
   mimeRender _ = encodeServerEvent . toServerEvent
 
 {- 1. Field names must not contain LF, CR or COLON characters.
@@ -124,39 +124,39 @@ encodeServerEvent e =
 instance ToServerEvent ServerEvent where
   toServerEvent = id
 
-instance {-# OVERLAPPABLE #-} (ToServerEvent chunk, ToSourceIO chunk a) => HasServer (ServerSentEvents a) context where
-  type ServerT (ServerSentEvents a) m = ServerT (StreamGet ServerEventFraming EventStream a) m
-  route Proxy =
-    route
-      (Proxy :: Proxy (StreamGet ServerEventFraming EventStream a))
-  hoistServerWithContext Proxy =
-    hoistServerWithContext
-      (Proxy :: Proxy (StreamGet ServerEventFraming EventStream a))
+instance {-# OVERLAPPABLE #-} (ToServerEvent chunk, S.ToSourceIO chunk a) => S.HasServer (ServerSentEvents a) context where
+  type ServerT (ServerSentEvents a) m = S.ServerT (S.StreamGet ServerEventFraming EventStream a) m
+  route S.Proxy =
+    S.route
+      (S.Proxy :: S.Proxy (S.StreamGet ServerEventFraming EventStream a))
+  hoistServerWithContext S.Proxy =
+    S.hoistServerWithContext
+      (S.Proxy :: S.Proxy (S.StreamGet ServerEventFraming EventStream a))
 
-instance {-# OVERLAPPING #-} (ToServerEvent chunk, ToSourceIO chunk a, GetHeaders (Headers h a)) => HasServer (ServerSentEvents (Headers h a)) context where
-  type ServerT (ServerSentEvents (Headers h a)) m = ServerT (StreamGet ServerEventFraming EventStream (Headers h a)) m
-  route Proxy =
-    route
-      (Proxy :: Proxy (StreamGet ServerEventFraming EventStream (Headers h a)))
-  hoistServerWithContext Proxy =
-    hoistServerWithContext
-      (Proxy :: Proxy (StreamGet ServerEventFraming EventStream (Headers h a)))
+instance {-# OVERLAPPING #-} (ToServerEvent chunk, S.ToSourceIO chunk a, S.GetHeaders (S.Headers h a)) => S.HasServer (ServerSentEvents (S.Headers h a)) context where
+  type ServerT (ServerSentEvents (S.Headers h a)) m = S.ServerT (S.StreamGet ServerEventFraming EventStream (S.Headers h a)) m
+  route S.Proxy =
+    S.route
+      (S.Proxy :: S.Proxy (S.StreamGet ServerEventFraming EventStream (S.Headers h a)))
+  hoistServerWithContext S.Proxy =
+    S.hoistServerWithContext
+      (S.Proxy :: S.Proxy (S.StreamGet ServerEventFraming EventStream (S.Headers h a)))
 
 -- | a helper instance for <https://hackage.haskell.org/package/servant-foreign-0.15.3/docs/Servant-Foreign.html servant-foreign>
 instance
-  (HasForeignType lang ftype a) =>
-  HasForeign lang ftype (ServerSentEvents a)
+  (S.HasForeignType lang ftype a) =>
+  S.HasForeign lang ftype (ServerSentEvents a)
   where
-  type Foreign ftype (ServerSentEvents a) = Req ftype
+  type Foreign ftype (ServerSentEvents a) = SFI.Req ftype
 
-  foreignFor lang Proxy Proxy req =
+  foreignFor lang S.Proxy S.Proxy req =
     req
-      & reqFuncName . _FunctionName %~ ("stream" :)
-      & reqMethod .~ method
-      & reqReturnType ?~ retType
+      & SFI.reqFuncName . SFI._FunctionName %~ ("stream" :)
+      & SFI.reqMethod .~ method
+      & SFI.reqReturnType ?~ retType
    where
-    retType = typeFor lang (Proxy :: Proxy ftype) (Proxy :: Proxy a)
-    method = reflectMethod (Proxy :: Proxy 'GET)
+    retType = SFI.typeFor lang (S.Proxy :: S.Proxy ftype) (S.Proxy :: S.Proxy a)
+    method = S.reflectMethod (S.Proxy :: S.Proxy S.GET)
 
 {- | A type representation of an event stream. It's responsible for setting proper content-type
   and buffering headers, as well as for providing parser implementations for the streams.
@@ -164,19 +164,19 @@ instance
 -}
 data EventStream
 
-instance Accept EventStream where
+instance S.Accept EventStream where
   contentType _ = "text" // "event-stream" /: ("charset", "utf-8")
 
 -- | Recommended headers for Server-Sent Events.
-type RecommendedEventSourceHeaders (a :: Type) = Headers '[Header "X-Accel-Buffering" Text, Header "Cache-Control" Text] a
+type RecommendedEventSourceHeaders (a :: Type) = S.Headers '[S.Header "X-Accel-Buffering" Text, S.Header "Cache-Control" Text] a
 
 -- | Add the recommended headers for Server-Sent Events to the response.
 recommendedEventSourceHeaders :: a -> RecommendedEventSourceHeaders a
-recommendedEventSourceHeaders = addHeader @"X-Accel-Buffering" "no" . addHeader @"Cache-Control" "no-store"
+recommendedEventSourceHeaders = S.addHeader @"X-Accel-Buffering" "no" . S.addHeader @"Cache-Control" "no-store"
 
 -- | A framing strategy for Server-Sent Events.
 data ServerEventFraming
 
 -- | Frames the server events by joining chunks with a newline.
-instance FramingRender ServerEventFraming where
+instance S.FramingRender ServerEventFraming where
   framingRender _ f = fmap (\x -> f x <> "\n")

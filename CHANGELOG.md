@@ -1,12 +1,16 @@
 # Revision history for servant-event-stream
 
+## 0.3.1.0 -- 2025-08-21
+
+* Qualify `servant` imports so that `ServerSentEvents` added in `servant-0.20.3.0` does not conflict with ours. (Issue #12)
+
 ## 0.3.0.0 -- 2024-09-05
 
 * Breaking changes to the API.
 
     Event streams are implemented using servant's 'Stream' endpoint. You should
-    provide a handler that returns a stream of events that implements 'ToSourceIO'
-    where events have a 'ToServerEvent' instance.
+    provide a handler that returns a stream of events that implements
+    'ToSourceIO' where events have a 'ToServerEvent' instance.
 
     Example:
 
