@@ -15,13 +15,20 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        ghc: ['8.0', '8.10', '9.2', '9.8', '9.12']
+        ghc: ['8.6', '8.10', '9.2', '9.8', '9.12']
     name: GHC ${{ matrix.ghc }}
     steps:
     - uses: actions/checkout@v4
     - uses: haskell-actions/setup@v2
+      id: setup
       with:
         ghc-version: ${{ matrix.ghc }}
     - run: cabal update
+    - run: cabal freeze
+    - uses: actions/cache@v4
+      with:
+        path: ${{ steps.setup.outputs.cabal-store }}
+        key: ${{ runner.os }}-ghc-${{ matrix.ghc }}-${{ hashFiles('cabal.project.freeze') }}
+        restore-keys: ${{ runner.os }}-ghc-${{ matrix.ghc }}-
     - run: cabal build
     - run: cabal test
