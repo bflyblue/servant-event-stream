@@ -1,5 +1,11 @@
 # Revision history for servant-event-stream
 
+## 0.3.2.0 -- 2026-02-23
+
+* Support GHC 8.6 through 9.12 (base 4.12 to 4.21).
+* Remove redundant `Typeable` deriving to fix `-Wderiving-typeable` warning on GHC 9.12+.
+* Add CI test matrix for GHC 8.6, 8.10, 9.2, 9.8, 9.12.
+
 ## 0.3.1.1 -- 2026-02-23
 
 * Constrain base bounds in test suite to match library.
