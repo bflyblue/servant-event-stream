@@ -3,10 +3,25 @@ on:
   pull_request:
   push:
 jobs:
-  tests:
+  nix:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - uses: cachix/install-nix-action@v22
+    - uses: actions/checkout@v4
+    - uses: cachix/install-nix-action@v27
     - run: nix build
     - run: nix flake check
+
+  cabal:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ghc: ['8.0', '8.10', '9.2', '9.8', '9.12', '9.14']
+    name: GHC ${{ matrix.ghc }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: haskell-actions/setup@v2
+      with:
+        ghc-version: ${{ matrix.ghc }}
+    - run: cabal update
+    - run: cabal build
+    - run: cabal test

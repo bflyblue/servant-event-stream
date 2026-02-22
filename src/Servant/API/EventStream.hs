@@ -12,7 +12,7 @@
 {- |
 Module: Servant.API.EventStream
 Description: Server Sent Events for Servant Streams
-Copyright: (c) 2024 Shaun Sharples
+Copyright: (c) 2026 Shaun Sharples
 License: BSD3
 Stability: alpha
 -}
