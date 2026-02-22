@@ -1,5 +1,9 @@
 # Revision history for servant-event-stream
 
+## 0.3.1.1 -- 2026-02-23
+
+* Constrain base bounds in test suite to match library.
+
 ## 0.3.1.0 -- 2025-08-21
 
 * Qualify `servant` imports so that `ServerSentEvents` added in `servant-0.20.3.0` does not conflict with ours. (Issue #12)
