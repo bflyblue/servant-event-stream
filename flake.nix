@@ -2,7 +2,7 @@
   description = "servant-event-stream";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.05";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.11";
   };
 
   outputs =
@@ -23,7 +23,7 @@
       hpkgsFor =
         system: pkgs:
         with pkgs.haskell.lib;
-        pkgs.haskell.packages.ghc98.override { overrides = self: super: { }; };
+        pkgs.haskell.packages.ghc912.override { overrides = self: super: { }; };
     in
     {
       packages = forallSystems (

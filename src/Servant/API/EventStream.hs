@@ -65,7 +65,6 @@ import Data.Kind (Type)
 import Data.Semigroup
 #endif
 import Data.Text (Text)
-import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Network.HTTP.Media ((//), (/:))
 import qualified Servant as S
@@ -76,7 +75,7 @@ import qualified Servant.Foreign.Internal as SFI
   <https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#event_stream_format>
 -}
 data ServerSentEvents (a :: Type)
-  deriving (Typeable, Generic)
+  deriving (Generic)
 
 instance S.HasLink (ServerSentEvents a) where
   type MkLink (ServerSentEvents a) r = r
