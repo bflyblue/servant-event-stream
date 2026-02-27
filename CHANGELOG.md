@@ -1,5 +1,12 @@
 # Revision history for servant-event-stream
 
+## 0.3.2.1 -- 2026-02-27
+
+* Add guard space after colon in SSE field encoding. Without it, field values
+  starting with a space lost their leading space because the SSE spec strips
+  exactly one leading space from field values. (Issue #16)
+* Add unit tests for `encodeServerEvent`.
+
 ## 0.3.2.0 -- 2026-02-23
 
 * Support GHC 8.6 through 9.12 (base 4.12 to 4.21).
