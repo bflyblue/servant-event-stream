@@ -115,7 +115,7 @@ encodeServerEvent e =
     <> mconcat (map (field "data:") (safelines (eventData e)))
  where
   optional name = maybe mempty (field name)
-  field name val = name <> val <> "\n"
+  field name val = name <> " " <> val <> "\n"
 
   -- discard CR and split LFs into multiple data values
   safelines = C8.lines . C8.filter (/= '\r')
