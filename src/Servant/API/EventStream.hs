@@ -19,39 +19,45 @@ Stability: alpha
 module Servant.API.EventStream (
   -- * Server-Sent Events
 
-  -- | Event streams are implemented using servant's 'Stream' endpoint.
-  -- You should provide a handler that returns a stream of events that implements
-  -- 'ToSourceIO' where events have a 'ToServerEvent' instance.
-  --
-  -- Example:
-  --
-  -- > type MyApi = "books" :> ServerSentEvents (SourceIO Book)
-  -- >
-  -- > instance ToServerEvent Book where
-  -- >   toServerEvent book = ...
-  -- >
-  -- > server :: Server MyApi
-  -- > server = streamBooks
-  -- >   where streamBooks :: Handler (SourceIO Book)
-  -- >         streamBooks = pure $ source [book1, ...]
+  {- | Event streams are implemented using servant's 'Stream' endpoint.
+  You should provide a handler that returns a stream of events that implements
+  'ToSourceIO' where events have a 'ToServerEvent' instance.
+
+  Example:
+
+  > type MyApi = "books" :> ServerSentEvents (SourceIO Book)
+  >
+  > instance ToServerEvent Book where
+  >   toServerEvent book = ...
+  >
+  > server :: Server MyApi
+  > server = streamBooks
+  >   where streamBooks :: Handler (SourceIO Book)
+  >         streamBooks = pure $ source [book1, ...]
+  -}
   ServerEvent (..),
   ToServerEvent (..),
+  serverEvent,
+  dataEvent,
+  commentEvent,
+  retryEvent,
   ServerSentEvents,
   EventStream,
 
   -- * Recommended headers for Server-Sent Events
 
-  -- | This is mostly to guide reverse-proxies like
-  --   <https://www.nginx.com/resources/wiki/start/topics/examples/x-accel/#x-accel-buffering nginx>.
-  --
-  --   Example:
-  --
-  --   > type MyApi = "books" :> ServerSentEvents (RecommendedEventSourceHeaders (SourceIO Book))
-  --   >
-  --   > server :: Server MyApi
-  --   > server = streamBooks
-  --   >   where streamBooks :: Handler (RecommendedEventSourceHeaders (SourceIO Book))
-  --   >         streamBooks = pure $ recommendedEventSourceHeaders $ source [book1, ...]
+  {- | This is mostly to guide reverse-proxies like
+  <https://www.nginx.com/resources/wiki/start/topics/examples/x-accel/#x-accel-buffering nginx>.
+
+  Example:
+
+  > type MyApi = "books" :> ServerSentEvents (RecommendedEventSourceHeaders (SourceIO Book))
+  >
+  > server :: Server MyApi
+  > server = streamBooks
+  >   where streamBooks :: Handler (RecommendedEventSourceHeaders (SourceIO Book))
+  >         streamBooks = pure $ recommendedEventSourceHeaders $ source [book1, ...]
+  -}
   RecommendedEventSourceHeaders,
   recommendedEventSourceHeaders,
 )
@@ -89,6 +95,10 @@ data ServerEvent = ServerEvent
   -- ^ Optional field providing an identifier for the event. Useful for clients to keep track of the last received event.
   , eventData :: !LBS.ByteString
   -- ^ The payload or content of the event. This is the main data sent to the client.
+  , eventComment :: !(Maybe LBS.ByteString)
+  -- ^ Optional comment line. Rendered as @: comment@. Commonly used as a heartbeat keepalive.
+  , eventRetry :: !(Maybe Word)
+  -- ^ Optional retry delay in milliseconds. Tells the client how long to wait before reconnecting.
   }
   deriving (Show, Eq, Generic)
 
@@ -107,17 +117,46 @@ instance (ToServerEvent a) => S.MimeRender EventStream a where
       Multple consecutive `data:` fields will be joined with LFs on the client.
 -}
 
+{- | Construct an event with an optional type, optional id, and data payload.
+This mirrors the pre-0.4 @ServerEvent@ constructor for easy migration.
+-}
+serverEvent :: Maybe LBS.ByteString -> Maybe LBS.ByteString -> LBS.ByteString -> ServerEvent
+serverEvent typ eid dat = ServerEvent typ eid dat Nothing Nothing
+
+-- | Construct a simple event carrying only a data payload.
+dataEvent :: LBS.ByteString -> ServerEvent
+dataEvent dat = ServerEvent Nothing Nothing dat Nothing Nothing
+
+-- | Construct a comment-only event, useful as a heartbeat keepalive.
+commentEvent :: LBS.ByteString -> ServerEvent
+commentEvent c = ServerEvent Nothing Nothing "" (Just c) Nothing
+
+-- | Construct a retry event that sets the client's reconnection delay in milliseconds.
+retryEvent :: Word -> ServerEvent
+retryEvent ms = ServerEvent Nothing Nothing "" Nothing (Just ms)
+
 -- | Encodes a t'ServerEvent' into a 'LBS.ByteString' that can be sent to the client.
 encodeServerEvent :: ServerEvent -> LBS.ByteString
 encodeServerEvent e =
-  optional "event:" (eventType e)
-    <> optional "id:" (eventId e)
-    <> mconcat (map (field "data:") (safelines (eventData e)))
+  optional ":" (sanitize <$> eventComment e)
+    <> maybe mempty (\ms -> "retry: " <> C8.pack (show ms) <> "\n") (eventRetry e)
+    <> optional "event:" (sanitize <$> eventType e)
+    <> optional "id:" (sanitizeId <$> eventId e)
+    <> mconcat (map (field "data:") (safedata (eventData e)))
  where
   optional name = maybe mempty (field name)
   field name val = name <> " " <> val <> "\n"
 
+  -- strip CR and LF from single-line field values
+  sanitize = C8.filter (\c -> c /= '\r' && c /= '\n')
+  -- strip CR, LF, and NULL from event id (NULL causes clients to ignore the field)
+  sanitizeId = C8.filter (\c -> c /= '\r' && c /= '\n' && c /= '\0')
+
   -- discard CR and split LFs into multiple data values
+  -- guarantee at least one data line for empty input
+  safedata bs = case safelines bs of
+    [] -> [""]
+    xs -> xs
   safelines = C8.lines . C8.filter (/= '\r')
 
 instance ToServerEvent ServerEvent where

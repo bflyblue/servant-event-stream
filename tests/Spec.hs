@@ -15,41 +15,122 @@ main :: IO ()
 main = hspec $ do
   describe "MimeRender EventStream ServerEvent" $ do
     it "encodes data-only event" $
-      render (ServerEvent Nothing Nothing "hello")
+      render (dataEvent "hello")
         `shouldBe` "data: hello\n"
 
     it "encodes event with all fields" $
-      render (ServerEvent (Just "update") (Just "1") "payload")
-        `shouldBe` "event: update\nid: 1\ndata: payload\n"
+      render (ServerEvent (Just "update") (Just "1") "payload" (Just "note") (Just 5000))
+        `shouldBe` ": note\nretry: 5000\nevent: update\nid: 1\ndata: payload\n"
 
     it "encodes multi-line data as multiple data fields" $
-      render (ServerEvent Nothing Nothing "line1\nline2\nline3")
+      render (serverEvent Nothing Nothing "line1\nline2\nline3")
         `shouldBe` "data: line1\ndata: line2\ndata: line3\n"
 
     it "preserves leading space in data value" $
-      render (ServerEvent Nothing Nothing " How")
+      render (serverEvent Nothing Nothing " How")
         `shouldBe` "data:  How\n"
 
     it "preserves leading space in event type" $
-      render (ServerEvent (Just " custom") Nothing "x")
+      render (serverEvent(Just " custom") Nothing "x")
         `shouldBe` "event:  custom\ndata: x\n"
 
     it "preserves leading space in event id" $
-      render (ServerEvent Nothing (Just " 42") "x")
+      render (serverEvent Nothing (Just " 42") "x")
         `shouldBe` "id:  42\ndata: x\n"
 
-    it "encodes empty data as empty output" $
-      render (ServerEvent Nothing Nothing "")
-        `shouldBe` ""
+    it "encodes empty data as a single data field" $
+      render (serverEvent Nothing Nothing "")
+        `shouldBe` "data: \n"
+
+    it "encodes empty data with event type" $
+      render (serverEvent(Just "ping") Nothing "")
+        `shouldBe` "event: ping\ndata: \n"
+
+    it "handles trailing newline in data" $
+      render (dataEvent "hello\n")
+        `shouldBe` "data: hello\n"
+
+    it "handles data that is only a newline" $
+      render (dataEvent "\n")
+        `shouldBe` "data: \n"
+
+    it "handles data that is only CR" $
+      render (dataEvent "\r")
+        `shouldBe` "data: \n"
 
     it "strips CR characters from data" $
-      render (ServerEvent Nothing Nothing "hello\r\nworld")
+      render (serverEvent Nothing Nothing "hello\r\nworld")
         `shouldBe` "data: hello\ndata: world\n"
 
+    it "emits empty event type" $
+      render (serverEvent (Just "") Nothing "x")
+        `shouldBe` "event: \ndata: x\n"
+
+    it "emits empty event id" $
+      render (serverEvent Nothing (Just "") "x")
+        `shouldBe` "id: \ndata: x\n"
+
     it "omits event field when Nothing" $
-      render (ServerEvent Nothing (Just "1") "x")
+      render (serverEvent Nothing (Just "1") "x")
         `shouldBe` "id: 1\ndata: x\n"
 
     it "omits id field when Nothing" $
-      render (ServerEvent (Just "ping") Nothing "x")
+      render (serverEvent(Just "ping") Nothing "x")
         `shouldBe` "event: ping\ndata: x\n"
+
+  describe "comment support" $ do
+    it "encodes a comment-only event" $
+      render (commentEvent "keepalive")
+        `shouldBe` ": keepalive\ndata: \n"
+
+    it "encodes comment with data" $
+      render (ServerEvent Nothing Nothing "hello" (Just "debug") Nothing)
+        `shouldBe` ": debug\ndata: hello\n"
+
+    it "encodes empty comment" $
+      render (commentEvent "")
+        `shouldBe` ": \ndata: \n"
+
+    it "strips CR and LF from comment" $
+      render (commentEvent "line1\r\nline2")
+        `shouldBe` ": line1line2\ndata: \n"
+
+  describe "retry support" $ do
+    it "encodes a retry-only event" $
+      render (retryEvent 3000)
+        `shouldBe` "retry: 3000\ndata: \n"
+
+    it "encodes retry zero" $
+      render (retryEvent 0)
+        `shouldBe` "retry: 0\ndata: \n"
+
+    it "encodes retry with data" $
+      render (ServerEvent Nothing Nothing "hello" Nothing (Just 1000))
+        `shouldBe` "retry: 1000\ndata: hello\n"
+
+  describe "field sanitization" $ do
+    it "strips LF from event type" $
+      render (serverEvent(Just "bad\ntype") Nothing "x")
+        `shouldBe` "event: badtype\ndata: x\n"
+
+    it "strips CR from event type" $
+      render (serverEvent(Just "bad\rtype") Nothing "x")
+        `shouldBe` "event: badtype\ndata: x\n"
+
+    it "strips CRLF from event id" $
+      render (serverEvent Nothing (Just "bad\r\nid") "x")
+        `shouldBe` "id: badid\ndata: x\n"
+
+    it "strips NULL from event id" $
+      render (serverEvent Nothing (Just "abc\0def") "x")
+        `shouldBe` "id: abcdef\ndata: x\n"
+
+  describe "convenience constructors" $ do
+    it "dataEvent is equivalent to serverEvent Nothing Nothing" $
+      dataEvent "hello" `shouldBe` serverEvent Nothing Nothing "hello"
+
+    it "commentEvent sets comment field" $
+      commentEvent "hi" `shouldBe` ServerEvent Nothing Nothing "" (Just "hi") Nothing
+
+    it "retryEvent sets retry field" $
+      retryEvent 5000 `shouldBe` ServerEvent Nothing Nothing "" Nothing (Just 5000)
