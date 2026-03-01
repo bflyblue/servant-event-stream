@@ -54,25 +54,22 @@ See the [Haddock documentation](https://hackage.haskell.org/package/servant-even
 
 ## Coming from servant's built-in SSE
 
-Servant 0.20.3.0 added its own `ServerSentEvents` type in
-`Servant.API.ServerSentEvents`. Both libraries have client support with a few
-differences:
+Servant 0.20.3.0 introduced its own `ServerSentEvents` type in
+`Servant.API.ServerSentEvents`. Both libraries can coexist — just qualify the
+import you don't use as your default. If you'd like to try this library,
+here's how the concepts map:
 
 | servant built-in | servant-event-stream |
-| --- | --- |
+|---|---|
 | `Servant.API.ServerSentEvents` | `Servant.API.EventStream` |
 | `ServerSentEvents 'JsonEvent MyEvent` | `ServerSentEvents (SourceIO MyEvent)` |
 | `EventKind` (`RawEvent` / `JsonEvent`) | `ToServerEvent` / `FromServerEvent` typeclasses |
-| — | `PostServerSentEvents` for POST endpoints |
-| — | `jsonEvent` / `jsonData` helpers |
-| — | `JsonData` DerivingVia newtype |
-| — | Comment, retry, and id field support |
 
-The main difference is that this library uses typeclasses (`ToServerEvent`,
-`FromServerEvent`) to control how your domain types map to SSE fields, rather
-than distinguishing at the type level via `EventKind`. This means a single
-event type can carry mixed field types (event names, ids, JSON data, comments)
-in one `ServerEvent` record.
+This library takes a typeclass approach: `ToServerEvent` and `FromServerEvent`
+control how your domain types map to SSE fields, giving you access to event
+names, ids, comments, and retry directives in a single `ServerEvent` record.
+It also provides `PostServerSentEvents` for POST endpoints, and JSON helpers
+(`jsonEvent`, `jsonData`, `JsonData`) for APIs that encode payloads as JSON.
 
 ## Development
 
