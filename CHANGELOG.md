@@ -9,6 +9,11 @@
 * Add `dataEvent` convenience constructor for simple data-only events.
 * Add `commentEvent` convenience constructor for heartbeat keepalives.
 * Add `retryEvent` convenience constructor for setting client reconnection delay.
+* Export `encodeServerEvent` for direct use outside of Servant.
+* Add `FromServerEvent` typeclass and `decodeServerEvent` for parsing SSE events.
+* Add `MimeUnrender EventStream` and `FramingUnrender ServerEventFraming` instances
+  for consuming SSE streams.
+* Export `ServerEventFraming` (needed for `StreamPost` SSE endpoints).
 * Always emit at least one `data:` field, even when `eventData` is empty.
   Previously, empty data produced no output and the event was silently
   dropped by clients.
