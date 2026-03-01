@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -37,11 +38,15 @@ module Servant.API.EventStream (
   -}
   ServerEvent (..),
   ToServerEvent (..),
+  FromServerEvent (..),
   serverEvent,
   dataEvent,
   commentEvent,
   retryEvent,
+  encodeServerEvent,
+  decodeServerEvent,
   ServerSentEvents,
+  ServerEventFraming,
   EventStream,
 
   -- * Recommended headers for Server-Sent Events
@@ -63,10 +68,18 @@ module Servant.API.EventStream (
 )
 where
 
+import Control.Monad ((<=<))
 import Control.Lens
+import qualified Data.Attoparsec.ByteString.Char8 as A
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as C8S
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Lazy.Char8 as C8
+import Data.Char (digitToInt, isDigit)
 import Data.Kind (Type)
+#if !MIN_VERSION_base(4,20,0)
+import Data.List (foldl')
+#endif
 #if !MIN_VERSION_base(4,11,0)
 import Data.Semigroup
 #endif
@@ -76,6 +89,7 @@ import Network.HTTP.Media ((//), (/:))
 import qualified Servant as S
 import qualified Servant.Foreign as S
 import qualified Servant.Foreign.Internal as SFI
+import Servant.Types.SourceT (transformWithAtto)
 
 {- | A ServerSentEvents endpoint emits an event stream using the format described at
   <https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#event_stream_format>
@@ -159,6 +173,76 @@ encodeServerEvent e =
     xs -> xs
   safelines = C8.lines . C8.filter (/= '\r')
 
+{- | This typeclass allows you to define custom event types that can be
+  parsed from the t'ServerEvent' type, which is used to represent events in
+  the Server-Sent Events (SSE) protocol.
+-}
+class FromServerEvent a where
+  fromServerEvent :: ServerEvent -> Either String a
+
+instance FromServerEvent ServerEvent where
+  fromServerEvent = Right
+
+instance (FromServerEvent a) => S.MimeUnrender EventStream a where
+  mimeUnrender _ = fromServerEvent <=< decodeServerEvent
+
+{- | Decode a single SSE event block from a lazy 'LBS.ByteString'.
+
+The input should be one event (the bytes between double-newline boundaries),
+with a trailing newline from framing. Parsing follows the
+<https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation WHATWG SSE spec>.
+-}
+decodeServerEvent :: LBS.ByteString -> Either String ServerEvent
+decodeServerEvent input =
+  let ls = splitLines (LBS.toStrict input)
+      (typ, eid, dataParts, comment, retry) = foldl' processLine (Nothing, Nothing, [], Nothing, Nothing) ls
+      dat = case dataParts of
+        [] -> ""
+        _  -> LBS.fromStrict (BS.intercalate "\n" (reverse dataParts))
+  in Right ServerEvent
+       { eventType = LBS.fromStrict <$> typ
+       , eventId = LBS.fromStrict <$> eid
+       , eventData = dat
+       , eventComment = LBS.fromStrict <$> comment
+       , eventRetry = retry
+       }
+ where
+  processLine acc@(typ, eid, dataParts, comment, retry) line
+    | BS.null line = acc  -- skip empty lines
+    | C8S.head line == ':' =
+        -- comment line: value is everything after the leading colon
+        let val = stripOneSpace (BS.drop 1 line)
+        in (typ, eid, dataParts, Just val, retry)
+    | otherwise =
+        let (name, val) = case C8S.elemIndex ':' line of
+              Just i  -> (BS.take i line, stripOneSpace (BS.drop (i + 1) line))
+              Nothing -> (line, "")
+        in if | name == "event" -> (Just val, eid, dataParts, comment, retry)
+              | name == "data"  -> (typ, eid, val : dataParts, comment, retry)
+              | name == "id"    ->
+                  if C8S.elem '\0' val  -- NULL byte present: ignore per spec
+                  then acc
+                  else (typ, Just val, dataParts, comment, retry)
+              | name == "retry" ->
+                  if BS.null val || not (C8S.all isDigit val)
+                  then acc
+                  else (typ, eid, dataParts, comment, Just (parseWord val))
+              | otherwise -> acc  -- unknown field: ignore per spec
+
+  stripOneSpace bs
+    | not (BS.null bs) && C8S.head bs == ' ' = BS.drop 1 bs
+    | otherwise = bs
+
+  parseWord = C8S.foldl' (\n c -> n * 10 + fromIntegral (digitToInt c)) 0
+
+  -- Split on LF, strip trailing CR from each line
+  splitLines bs = map stripCR (C8S.split '\n' bs)
+   where
+    stripCR s
+      | BS.null s = s
+      | C8S.last s == '\r' = BS.init s
+      | otherwise = s
+
 instance ToServerEvent ServerEvent where
   toServerEvent = id
 
@@ -218,3 +302,36 @@ data ServerEventFraming
 -- | Frames the server events by joining chunks with a newline.
 instance S.FramingRender ServerEventFraming where
   framingRender _ f = fmap (\x -> f x <> "\n")
+
+-- | Unframes a server event stream by splitting on blank lines (double newline boundaries).
+instance S.FramingUnrender ServerEventFraming where
+  framingUnrender _ f = transformWithAtto (eventParser f)
+
+-- | Attoparsec parser that collects lines until a blank line or end-of-input,
+-- then feeds the assembled block to the given decoding function.
+eventParser :: (LBS.ByteString -> Either String a) -> A.Parser a
+eventParser f = do
+  ls <- collectLines
+  case ls of
+    [] -> fail "empty event"
+    _  -> do
+      let block = BS.intercalate "\n" ls <> "\n"
+      case f (LBS.fromStrict block) of
+        Left err -> fail err
+        Right a  -> pure a
+ where
+  collectLines = do
+    atEnd <- A.atEnd
+    if atEnd
+      then pure []
+      else do
+        line <- A.takeWhile (\c -> c /= '\n' && c /= '\r')
+        -- consume line ending: CRLF, CR, or LF
+        _ <- A.option () (A.char '\r' *> pure ())
+        _ <- A.option () (A.char '\n' *> pure ())
+        -- blank line = end of event
+        if BS.null line
+          then pure []
+          else do
+            rest <- collectLines
+            pure (line : rest)
