@@ -24,7 +24,7 @@ jobs:
       with:
         ghc-version: ${{ matrix.ghc }}
     - run: cabal update
-    - run: cabal freeze
+    - run: cabal freeze --enable-tests
     - uses: actions/cache@v4
       with:
         path: ${{ steps.setup.outputs.cabal-store }}
