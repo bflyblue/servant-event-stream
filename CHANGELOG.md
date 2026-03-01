@@ -5,6 +5,10 @@
 * **Breaking**: Add `eventComment` and `eventRetry` fields to `ServerEvent`.
   Existing code using the `ServerEvent` constructor must add the new fields,
   e.g. `ServerEvent typ eid dat Nothing Nothing`.
+* **Breaking**: Drop `charset=utf-8` from the `Accept` instance. The content
+  type is now `text/event-stream` (no parameters), matching the WHATWG spec.
+* **New dependency**: `aeson` (for JSON helpers).
+* **New dependency**: `servant-client-core` (for `HasClient` instances).
 * Add `serverEvent` convenience constructor matching the old 3-field API for easy migration.
 * Add `dataEvent` convenience constructor for simple data-only events.
 * Add `commentEvent` convenience constructor for heartbeat keepalives.
@@ -13,6 +17,15 @@
 * Add `FromServerEvent` typeclass and `decodeServerEvent` for parsing SSE events.
 * Add `MimeUnrender EventStream` and `FramingUnrender ServerEventFraming` instances
   for consuming SSE streams.
+* Add `HasClient` instances for `ServerSentEvents` and `PostServerSentEvents`,
+  enabling client-side SSE consumption via `servant-client`.
+* Add `PostServerSentEvents` combinator for POST SSE endpoints (e.g. OpenAI's
+  streaming API), with `HasServer`, `HasClient`, and `HasForeign` instances.
+* Add `JsonData` newtype for deriving `ToServerEvent` and `FromServerEvent` via
+  JSON encoding using `DerivingVia`.
+* Add `jsonEvent` helper to construct events with JSON-encoded data payloads.
+* Add `jsonData` helper to decode JSON from an event's data field.
+* Strip leading UTF-8 BOM from SSE input, per the WHATWG spec.
 * Export `ServerEventFraming` (needed for `StreamPost` SSE endpoints).
 * Always emit at least one `data:` field, even when `eventData` is empty.
   Previously, empty data produced no output and the event was silently
