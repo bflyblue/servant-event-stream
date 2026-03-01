@@ -1,8 +1,9 @@
 # Coming from servant's built-in SSE
 
 Servant 0.20.3.0 introduced SSE support in `Servant.API.ServerSentEvents`.
-This guide shows equivalent code side by side so you can see how the two
-libraries approach the same problems.
+The built-in module focuses on client-side consumption (`HasClient` instances),
+while this library provides both server and client support. This guide shows
+how the concepts map between the two.
 
 ## Defining an API
 
@@ -25,14 +26,11 @@ type MyApi = "events" :> ServerSentEvents (SourceIO NewsItem)
 The stream type (`SourceIO`) is explicit in the API, which is the same pattern
 servant uses for other streaming endpoints.
 
-## Sending events (server side)
+## Serving events
 
-**servant built-in:**
-
-Event encoding is determined by `EventKind` at the type level — `'JsonEvent`
-serialises via `ToJSON`, `'RawEvent` sends raw bytes.
-
-**servant-event-stream:**
+The built-in `ServerSentEvents` does not yet include `HasServer` instances, so
+it can't be used directly in servant server handlers. This library provides
+`HasServer` instances for both `ServerSentEvents` and `PostServerSentEvents`.
 
 You write a `ToServerEvent` instance that maps each constructor to a
 `ServerEvent`. This gives you control over the `event:`, `id:`, and `data:`
@@ -51,6 +49,8 @@ instance ToServerEvent NewsItem where
 ```
 
 ## Consuming events (client side)
+
+Both libraries provide `HasClient` instances for consuming SSE streams.
 
 **servant built-in:**
 
@@ -75,18 +75,13 @@ instance FromServerEvent NewsItem where
 
 ## POST endpoints
 
-**servant built-in:**
+The built-in `ServerSentEvents'` accepts a method parameter, so you can write
+`ServerSentEvents' '[POST] 200 'JsonEvent ChatEvent` in your API type. However,
+since there are no `HasServer` instances, this currently only works on the
+client side.
 
-Use `ServerSentEvents'` with a custom method:
-
-```haskell
-type MyApi = "chat" :> ReqBody '[JSON] ChatRequest
-                    :> ServerSentEvents' '[POST] 200 'JsonEvent ChatEvent
-```
-
-**servant-event-stream:**
-
-Use `PostServerSentEvents`:
+This library provides `PostServerSentEvents` with full server and client
+support:
 
 ```haskell
 type MyApi = "chat" :> ReqBody '[JSON] ChatRequest

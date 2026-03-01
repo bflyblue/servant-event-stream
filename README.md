@@ -69,6 +69,9 @@ control how your domain types map to SSE fields, giving you access to event
 names, ids, comments, and retry directives in a single `ServerEvent` record.
 It also provides `PostServerSentEvents` for POST endpoints, and JSON helpers
 (`jsonEvent`, `jsonData`, `JsonData`) for APIs that encode payloads as JSON.
+
+The built-in module focuses on client-side consumption (`HasClient` instances),
+while this library provides both `HasServer` and `HasClient` instances.
 See the [side-by-side examples](docs/coming-from-servant-sse.md) for a more
 detailed walkthrough.
 
