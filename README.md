@@ -55,8 +55,7 @@ See the [Haddock documentation](https://hackage.haskell.org/package/servant-even
 ## Coming from servant's built-in SSE
 
 Servant 0.20.3.0 introduced its own `ServerSentEvents` type in
-`Servant.API.ServerSentEvents`. Both libraries can coexist — just qualify the
-import you don't use as your default. If you'd like to try this library,
+`Servant.API.ServerSentEvents`. If you'd like to try this library instead,
 here's how the concepts map:
 
 | servant built-in | servant-event-stream |
