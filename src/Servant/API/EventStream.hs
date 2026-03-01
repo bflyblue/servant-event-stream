@@ -12,59 +12,86 @@
 
 {- |
 Module: Servant.API.EventStream
-Description: Server Sent Events for Servant Streams
+Description: Server-Sent Events for Servant
 Copyright: (c) 2026 Shaun Sharples
 License: BSD3
 Stability: alpha
+
+<https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events Server-Sent Events>
+(SSE) support for Servant. Provides a 'ServerSentEvents' API combinator and
+a 'ToServerEvent' typeclass so you can stream custom event types from Servant
+endpoints.
+
+== Sending events
+
+Use 'ServerSentEvents' in your API type and provide a 'ToServerEvent' instance
+for your domain type. Each constructor maps to an SSE event type, and the
+payload is carried in the data field:
+
+> data VehicleEvent
+>   = KeyOn
+>   | KeyOff
+>   | Position Double Double
+>
+> type MyApi = "events" :> ServerSentEvents (SourceIO VehicleEvent)
+>
+> instance ToServerEvent VehicleEvent where
+>   toServerEvent KeyOn              = serverEvent (Just "keyOn") Nothing ""
+>   toServerEvent KeyOff             = serverEvent (Just "keyOff") Nothing ""
+>   toServerEvent (Position lat lon) =
+>     serverEvent (Just "position") Nothing
+>       (C8.pack (show lat <> "," <> show lon))
+>
+> server :: Server MyApi
+> server = pure $ source [KeyOn, Position 51.5 (-0.5), KeyOff]
+
+== Receiving events
+
+On the client side, provide a 'FromServerEvent' instance to parse incoming
+events back into your domain type. Dispatch on 'eventType' to determine which
+constructor to use:
+
+> instance FromServerEvent VehicleEvent where
+>   fromServerEvent ev = case eventType ev of
+>     Just "keyOn"    -> Right KeyOn
+>     Just "keyOff"   -> Right KeyOff
+>     Just "position" -> parsePosition (eventData ev)
+>     _               -> Left "unknown vehicle event"
+
+== Reverse-proxy headers
+
+Wrap your stream in 'RecommendedEventSourceHeaders' to add @X-Accel-Buffering@
+and @Cache-Control@ headers that prevent reverse proxies from buffering the
+event stream:
+
+> type MyApi = "events" :> ServerSentEvents (RecommendedEventSourceHeaders (SourceIO VehicleEvent))
 -}
 module Servant.API.EventStream (
-  -- * Server-Sent Events
+  -- * API combinator
+  ServerSentEvents,
+  EventStream,
 
-  {- | Event streams are implemented using servant's 'Stream' endpoint.
-  You should provide a handler that returns a stream of events that implements
-  'ToSourceIO' where events have a 'ToServerEvent' instance.
-
-  Example:
-
-  > type MyApi = "books" :> ServerSentEvents (SourceIO Book)
-  >
-  > instance ToServerEvent Book where
-  >   toServerEvent book = ...
-  >
-  > server :: Server MyApi
-  > server = streamBooks
-  >   where streamBooks :: Handler (SourceIO Book)
-  >         streamBooks = pure $ source [book1, ...]
-  -}
+  -- * Events
   ServerEvent (..),
-  ToServerEvent (..),
-  FromServerEvent (..),
   serverEvent,
   dataEvent,
   commentEvent,
   retryEvent,
+
+  -- * Sending events
+  ToServerEvent (..),
   encodeServerEvent,
+
+  -- * Receiving events
+  FromServerEvent (..),
   decodeServerEvent,
-  ServerSentEvents,
-  ServerEventFraming,
-  EventStream,
 
-  -- * Recommended headers for Server-Sent Events
-
-  {- | This is mostly to guide reverse-proxies like
-  <https://www.nginx.com/resources/wiki/start/topics/examples/x-accel/#x-accel-buffering nginx>.
-
-  Example:
-
-  > type MyApi = "books" :> ServerSentEvents (RecommendedEventSourceHeaders (SourceIO Book))
-  >
-  > server :: Server MyApi
-  > server = streamBooks
-  >   where streamBooks :: Handler (RecommendedEventSourceHeaders (SourceIO Book))
-  >         streamBooks = pure $ recommendedEventSourceHeaders $ source [book1, ...]
-  -}
+  -- * Recommended headers
   RecommendedEventSourceHeaders,
   recommendedEventSourceHeaders,
+
+  -- * Framing
+  ServerEventFraming,
 )
 where
 
@@ -91,8 +118,21 @@ import qualified Servant.Foreign as S
 import qualified Servant.Foreign.Internal as SFI
 import Servant.Types.SourceT (transformWithAtto)
 
-{- | A ServerSentEvents endpoint emits an event stream using the format described at
-  <https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#event_stream_format>
+-- ---------------------------------------------------------------------------
+-- Content type
+
+-- | The @text\/event-stream@ content type.
+data EventStream
+
+instance S.Accept EventStream where
+  contentType _ = "text" // "event-stream" /: ("charset", "utf-8")
+
+-- ---------------------------------------------------------------------------
+-- API combinator
+
+{- | A Servant API combinator for
+<https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events Server-Sent Event>
+endpoints. Use this in place of a @Verb@ to stream events to clients.
 -}
 data ServerSentEvents (a :: Type)
   deriving (Generic)
@@ -101,35 +141,23 @@ instance S.HasLink (ServerSentEvents a) where
   type MkLink (ServerSentEvents a) r = r
   toLink toA _ = toA
 
--- | Represents an event sent from the server to the client in Server-Sent Events (SSE).
+-- ---------------------------------------------------------------------------
+-- Events
+
+-- | An SSE event. Corresponds to a single event block in the wire format.
 data ServerEvent = ServerEvent
   { eventType :: !(Maybe LBS.ByteString)
-  -- ^ Optional field specifying the type of event. Can be used to distinguish between different kinds of events.
+  -- ^ The @event:@ field, used by clients to dispatch via @addEventListener@.
   , eventId :: !(Maybe LBS.ByteString)
-  -- ^ Optional field providing an identifier for the event. Useful for clients to keep track of the last received event.
+  -- ^ The @id:@ field. Sent as @Last-Event-ID@ on reconnection.
   , eventData :: !LBS.ByteString
-  -- ^ The payload or content of the event. This is the main data sent to the client.
+  -- ^ The @data:@ payload. Multi-line values are split across multiple @data:@ fields on the wire.
   , eventComment :: !(Maybe LBS.ByteString)
-  -- ^ Optional comment line. Rendered as @: comment@. Commonly used as a heartbeat keepalive.
+  -- ^ A @:@ comment line. Commonly used as a keepalive heartbeat.
   , eventRetry :: !(Maybe Word)
-  -- ^ Optional retry delay in milliseconds. Tells the client how long to wait before reconnecting.
+  -- ^ The @retry:@ field — reconnection delay in milliseconds.
   }
   deriving (Show, Eq, Generic)
-
-{- | This typeclass allows you to define custom event types that can be
-  transformed into the t'ServerEvent' type, which is used to represent events in
-  the Server-Sent Events (SSE) protocol.
--}
-class ToServerEvent a where
-  toServerEvent :: a -> ServerEvent
-
-instance (ToServerEvent a) => S.MimeRender EventStream a where
-  mimeRender _ = encodeServerEvent . toServerEvent
-
-{- 1. Field names must not contain LF, CR or COLON characters.
-   2. Values must not contain LF or CR characters.
-      Multple consecutive `data:` fields will be joined with LFs on the client.
--}
 
 {- | Construct an event with an optional type, optional id, and data payload.
 This mirrors the pre-0.4 @ServerEvent@ constructor for easy migration.
@@ -141,7 +169,7 @@ serverEvent typ eid dat = ServerEvent typ eid dat Nothing Nothing
 dataEvent :: LBS.ByteString -> ServerEvent
 dataEvent dat = ServerEvent Nothing Nothing dat Nothing Nothing
 
--- | Construct a comment-only event, useful as a heartbeat keepalive.
+-- | Construct a comment-only event, useful as a keepalive heartbeat.
 commentEvent :: LBS.ByteString -> ServerEvent
 commentEvent c = ServerEvent Nothing Nothing "" (Just c) Nothing
 
@@ -149,7 +177,20 @@ commentEvent c = ServerEvent Nothing Nothing "" (Just c) Nothing
 retryEvent :: Word -> ServerEvent
 retryEvent ms = ServerEvent Nothing Nothing "" Nothing (Just ms)
 
--- | Encodes a t'ServerEvent' into a 'LBS.ByteString' that can be sent to the client.
+-- ---------------------------------------------------------------------------
+-- Sending events
+
+-- | Convert a custom type to a t'ServerEvent' for sending.
+class ToServerEvent a where
+  toServerEvent :: a -> ServerEvent
+
+instance ToServerEvent ServerEvent where
+  toServerEvent = id
+
+instance (ToServerEvent a) => S.MimeRender EventStream a where
+  mimeRender _ = encodeServerEvent . toServerEvent
+
+-- | Encode a t'ServerEvent' to its wire format.
 encodeServerEvent :: ServerEvent -> LBS.ByteString
 encodeServerEvent e =
   optional ":" (sanitize <$> eventComment e)
@@ -161,22 +202,18 @@ encodeServerEvent e =
   optional name = maybe mempty (field name)
   field name val = name <> " " <> val <> "\n"
 
-  -- strip CR and LF from single-line field values
   sanitize = C8.filter (\c -> c /= '\r' && c /= '\n')
-  -- strip CR, LF, and NULL from event id (NULL causes clients to ignore the field)
   sanitizeId = C8.filter (\c -> c /= '\r' && c /= '\n' && c /= '\0')
 
-  -- discard CR and split LFs into multiple data values
-  -- guarantee at least one data line for empty input
   safedata bs = case safelines bs of
     [] -> [""]
     xs -> xs
   safelines = C8.lines . C8.filter (/= '\r')
 
-{- | This typeclass allows you to define custom event types that can be
-  parsed from the t'ServerEvent' type, which is used to represent events in
-  the Server-Sent Events (SSE) protocol.
--}
+-- ---------------------------------------------------------------------------
+-- Receiving events
+
+-- | Parse a t'ServerEvent' into a custom type after receiving.
 class FromServerEvent a where
   fromServerEvent :: ServerEvent -> Either String a
 
@@ -186,10 +223,9 @@ instance FromServerEvent ServerEvent where
 instance (FromServerEvent a) => S.MimeUnrender EventStream a where
   mimeUnrender _ = fromServerEvent <=< decodeServerEvent
 
-{- | Decode a single SSE event block from a lazy 'LBS.ByteString'.
+{- | Decode a single SSE event block from its wire format.
 
-The input should be one event (the bytes between double-newline boundaries),
-with a trailing newline from framing. Parsing follows the
+Parsing follows the
 <https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation WHATWG SSE spec>.
 -}
 decodeServerEvent :: LBS.ByteString -> Either String ServerEvent
@@ -210,7 +246,6 @@ decodeServerEvent input =
   processLine acc@(typ, eid, dataParts, comment, retry) line
     | BS.null line = acc  -- skip empty lines
     | C8S.head line == ':' =
-        -- comment line: value is everything after the leading colon
         let val = stripOneSpace (BS.drop 1 line)
         in (typ, eid, dataParts, Just val, retry)
     | otherwise =
@@ -220,14 +255,14 @@ decodeServerEvent input =
         in if | name == "event" -> (Just val, eid, dataParts, comment, retry)
               | name == "data"  -> (typ, eid, val : dataParts, comment, retry)
               | name == "id"    ->
-                  if C8S.elem '\0' val  -- NULL byte present: ignore per spec
+                  if C8S.elem '\0' val
                   then acc
                   else (typ, Just val, dataParts, comment, retry)
               | name == "retry" ->
                   if BS.null val || not (C8S.all isDigit val)
                   then acc
                   else (typ, eid, dataParts, comment, Just (parseWord val))
-              | otherwise -> acc  -- unknown field: ignore per spec
+              | otherwise -> acc
 
   stripOneSpace bs
     | not (BS.null bs) && C8S.head bs == ' ' = BS.drop 1 bs
@@ -235,7 +270,6 @@ decodeServerEvent input =
 
   parseWord = C8S.foldl' (\n c -> n * 10 + fromIntegral (digitToInt c)) 0
 
-  -- Split on LF, strip trailing CR from each line
   splitLines bs = map stripCR (C8S.split '\n' bs)
    where
     stripCR s
@@ -243,72 +277,35 @@ decodeServerEvent input =
       | C8S.last s == '\r' = BS.init s
       | otherwise = s
 
-instance ToServerEvent ServerEvent where
-  toServerEvent = id
+-- ---------------------------------------------------------------------------
+-- Recommended headers
 
-instance {-# OVERLAPPABLE #-} (ToServerEvent chunk, S.ToSourceIO chunk a) => S.HasServer (ServerSentEvents a) context where
-  type ServerT (ServerSentEvents a) m = S.ServerT (S.StreamGet ServerEventFraming EventStream a) m
-  route S.Proxy =
-    S.route
-      (S.Proxy :: S.Proxy (S.StreamGet ServerEventFraming EventStream a))
-  hoistServerWithContext S.Proxy =
-    S.hoistServerWithContext
-      (S.Proxy :: S.Proxy (S.StreamGet ServerEventFraming EventStream a))
+{- | Adds @X-Accel-Buffering: no@ and @Cache-Control: no-store@ headers to
+prevent reverse proxies (e.g. nginx) from buffering the event stream.
 
-instance {-# OVERLAPPING #-} (ToServerEvent chunk, S.ToSourceIO chunk a, S.GetHeaders (S.Headers h a)) => S.HasServer (ServerSentEvents (S.Headers h a)) context where
-  type ServerT (ServerSentEvents (S.Headers h a)) m = S.ServerT (S.StreamGet ServerEventFraming EventStream (S.Headers h a)) m
-  route S.Proxy =
-    S.route
-      (S.Proxy :: S.Proxy (S.StreamGet ServerEventFraming EventStream (S.Headers h a)))
-  hoistServerWithContext S.Proxy =
-    S.hoistServerWithContext
-      (S.Proxy :: S.Proxy (S.StreamGet ServerEventFraming EventStream (S.Headers h a)))
-
--- | a helper instance for <https://hackage.haskell.org/package/servant-foreign-0.15.3/docs/Servant-Foreign.html servant-foreign>
-instance
-  (S.HasForeignType lang ftype a) =>
-  S.HasForeign lang ftype (ServerSentEvents a)
-  where
-  type Foreign ftype (ServerSentEvents a) = SFI.Req ftype
-
-  foreignFor lang S.Proxy S.Proxy req =
-    req
-      & SFI.reqFuncName . SFI._FunctionName %~ ("stream" :)
-      & SFI.reqMethod .~ method
-      & SFI.reqReturnType ?~ retType
-   where
-    retType = SFI.typeFor lang (S.Proxy :: S.Proxy ftype) (S.Proxy :: S.Proxy a)
-    method = S.reflectMethod (S.Proxy :: S.Proxy S.GET)
-
-{- | A type representation of an event stream. It's responsible for setting proper content-type
-  and buffering headers, as well as for providing parser implementations for the streams.
-  Read more on <https://docs.servant.dev/en/stable/tutorial/Server.html#streaming-endpoints Servant Streaming Docs>
+> type MyApi = "events" :> ServerSentEvents (RecommendedEventSourceHeaders (SourceIO Event))
+>
+> server :: Server MyApi
+> server = pure $ recommendedEventSourceHeaders $ source [event1, event2]
 -}
-data EventStream
-
-instance S.Accept EventStream where
-  contentType _ = "text" // "event-stream" /: ("charset", "utf-8")
-
--- | Recommended headers for Server-Sent Events.
 type RecommendedEventSourceHeaders (a :: Type) = S.Headers '[S.Header "X-Accel-Buffering" Text, S.Header "Cache-Control" Text] a
 
--- | Add the recommended headers for Server-Sent Events to the response.
+-- | Add the recommended headers to a response.
 recommendedEventSourceHeaders :: a -> RecommendedEventSourceHeaders a
 recommendedEventSourceHeaders = S.addHeader @"X-Accel-Buffering" "no" . S.addHeader @"Cache-Control" "no-store"
 
--- | A framing strategy for Server-Sent Events.
+-- ---------------------------------------------------------------------------
+-- Framing
+
+-- | Separates events with blank lines per the SSE wire format.
 data ServerEventFraming
 
--- | Frames the server events by joining chunks with a newline.
 instance S.FramingRender ServerEventFraming where
   framingRender _ f = fmap (\x -> f x <> "\n")
 
--- | Unframes a server event stream by splitting on blank lines (double newline boundaries).
 instance S.FramingUnrender ServerEventFraming where
   framingUnrender _ f = transformWithAtto (eventParser f)
 
--- | Attoparsec parser that collects lines until a blank line or end-of-input,
--- then feeds the assembled block to the given decoding function.
 eventParser :: (LBS.ByteString -> Either String a) -> A.Parser a
 eventParser f = do
   ls <- collectLines
@@ -329,9 +326,45 @@ eventParser f = do
         -- consume line ending: CRLF, CR, or LF
         _ <- A.option () (A.char '\r' *> pure ())
         _ <- A.option () (A.char '\n' *> pure ())
-        -- blank line = end of event
         if BS.null line
           then pure []
           else do
             rest <- collectLines
             pure (line : rest)
+
+-- ---------------------------------------------------------------------------
+-- Servant integration
+
+instance {-# OVERLAPPABLE #-} (ToServerEvent chunk, S.ToSourceIO chunk a) => S.HasServer (ServerSentEvents a) context where
+  type ServerT (ServerSentEvents a) m = S.ServerT (S.StreamGet ServerEventFraming EventStream a) m
+  route S.Proxy =
+    S.route
+      (S.Proxy :: S.Proxy (S.StreamGet ServerEventFraming EventStream a))
+  hoistServerWithContext S.Proxy =
+    S.hoistServerWithContext
+      (S.Proxy :: S.Proxy (S.StreamGet ServerEventFraming EventStream a))
+
+instance {-# OVERLAPPING #-} (ToServerEvent chunk, S.ToSourceIO chunk a, S.GetHeaders (S.Headers h a)) => S.HasServer (ServerSentEvents (S.Headers h a)) context where
+  type ServerT (ServerSentEvents (S.Headers h a)) m = S.ServerT (S.StreamGet ServerEventFraming EventStream (S.Headers h a)) m
+  route S.Proxy =
+    S.route
+      (S.Proxy :: S.Proxy (S.StreamGet ServerEventFraming EventStream (S.Headers h a)))
+  hoistServerWithContext S.Proxy =
+    S.hoistServerWithContext
+      (S.Proxy :: S.Proxy (S.StreamGet ServerEventFraming EventStream (S.Headers h a)))
+
+-- | Enables <https://hackage.haskell.org/package/servant-foreign servant-foreign> code generation, prefixing function names with \"stream\".
+instance
+  (S.HasForeignType lang ftype a) =>
+  S.HasForeign lang ftype (ServerSentEvents a)
+  where
+  type Foreign ftype (ServerSentEvents a) = SFI.Req ftype
+
+  foreignFor lang S.Proxy S.Proxy req =
+    req
+      & SFI.reqFuncName . SFI._FunctionName %~ ("stream" :)
+      & SFI.reqMethod .~ method
+      & SFI.reqReturnType ?~ retType
+   where
+    retType = SFI.typeFor lang (S.Proxy :: S.Proxy ftype) (S.Proxy :: S.Proxy a)
+    method = S.reflectMethod (S.Proxy :: S.Proxy S.GET)
