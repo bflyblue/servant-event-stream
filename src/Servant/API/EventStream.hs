@@ -66,7 +66,7 @@ JSON from the @data:@ field:
 == JSON via DerivingVia
 
 When every event carries the same JSON structure (no @event:@ type dispatch),
-t'JsonData' derives both 'ToServerEvent' and 'FromServerEvent' automatically:
+'JsonData' derives both 'ToServerEvent' and 'FromServerEvent' automatically:
 
 > data Temperature = Temperature { celsius :: Double }
 >   deriving (Generic, ToJSON, FromJSON)
