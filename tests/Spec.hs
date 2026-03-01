@@ -3,10 +3,13 @@
 module Main (main) where
 
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Lazy.Char8 as C8
 import Data.Proxy (Proxy (..))
 import Servant.API.ContentTypes (mimeRender, mimeUnrender)
 import Servant.API.EventStream
 import Test.Hspec
+import Test.Hspec.QuickCheck (prop)
+import Test.QuickCheck
 
 -- A domain type mirroring the haddock usage example.
 data ChatEvent
@@ -29,6 +32,57 @@ instance FromServerEvent ChatEvent where
         Just "response.content.done" -> Right (ContentDone (eventData ev))
         Just "response.done" -> Right ChatDone
         _ -> Left "unknown event"
+
+-- Arbitrary instance for roundtrip property testing.
+-- Generates "canonical" ServerEvent values that survive encode/decode:
+--   - no CR or LF in single-line fields (type, id, comment)
+--   - no NULL in id
+--   - no CR in data, no trailing LF in data
+instance Arbitrary ServerEvent where
+    arbitrary =
+        ServerEvent
+            <$> genMaybe genSafeLine
+            <*> genMaybe genSafeLine
+            <*> genSafeData
+            <*> genMaybe genSafeLine
+            <*> arbitrary
+    shrink (ServerEvent typ eid dat com ret) =
+        concat
+            [ [ServerEvent Nothing eid dat com ret | Just _ <- [typ]]
+            , [ServerEvent typ Nothing dat com ret | Just _ <- [eid]]
+            , [ServerEvent typ eid "" com ret | dat /= ""]
+            , [ServerEvent typ eid dat Nothing ret | Just _ <- [com]]
+            , [ServerEvent typ eid dat com Nothing | Just _ <- [ret]]
+            ]
+
+genMaybe :: Gen a -> Gen (Maybe a)
+genMaybe g = frequency [(1, pure Nothing), (3, Just <$> g)]
+
+-- Single-line value with no CR or LF (safe for type, id, comment fields).
+genSafeLine :: Gen LBS.ByteString
+genSafeLine =
+    C8.pack
+        <$> listOf
+            ( frequency
+                [ (10, elements ['a' .. 'z'])
+                , (3, pure ' ')
+                , (2, pure ':')
+                , (1, elements "!@#$%^&*")
+                ]
+            )
+
+-- Multi-line data: no CR, no trailing LF.
+genSafeData :: Gen LBS.ByteString
+genSafeData =
+    frequency
+        [ (1, pure "")
+        , ( 5
+          , do
+                leading <- listOf genSafeLine
+                final <- genSafeLine `suchThat` (not . LBS.null)
+                pure (C8.intercalate "\n" (leading ++ [final]))
+          )
+        ]
 
 render :: ServerEvent -> LBS.ByteString
 render = mimeRender (Proxy :: Proxy EventStream)
@@ -330,3 +384,7 @@ main = hspec $ do
         it "rejects missing event type" $
             decodeC "data: hello\n"
                 `shouldBe` Left "unknown event"
+
+    describe "roundtrip properties" $ do
+        prop "encode then decode is identity for canonical ServerEvent" $ \e ->
+            decode (render e) === Right (e :: ServerEvent)

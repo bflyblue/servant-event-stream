@@ -57,5 +57,6 @@ test-suite tests-default
     base >=4.12 && <4.22,
     bytestring >=0.10.8 && <0.13,
     hspec >=2.7 && <2.12,
+    QuickCheck >=2.12 && <2.16,
     servant >=0.15 && <0.21,
     servant-event-stream
