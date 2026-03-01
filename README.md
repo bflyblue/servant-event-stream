@@ -52,6 +52,29 @@ data Temperature = Temperature { celsius :: Double }
 
 See the [Haddock documentation](https://hackage.haskell.org/package/servant-event-stream/docs/Servant-API-EventStream.html) for the full API reference.
 
+## Coming from servant's built-in SSE
+
+Servant 0.20.3.0 added its own `ServerSentEvents` type in
+`Servant.API.ServerSentEvents`. Both libraries can coexist — just qualify
+the import you don't want as your default. If you'd like to migrate, here's
+how the concepts map:
+
+| servant built-in | servant-event-stream |
+|---|---|
+| `Servant.API.ServerSentEvents` | `Servant.API.EventStream` |
+| `ServerSentEvents 'JsonEvent MyEvent` | `ServerSentEvents (SourceIO MyEvent)` |
+| `EventKind` (`RawEvent` / `JsonEvent`) | `ToServerEvent` / `FromServerEvent` typeclasses |
+| — | `PostServerSentEvents` for POST endpoints |
+| — | `jsonEvent` / `jsonData` helpers |
+| — | `JsonData` DerivingVia newtype |
+| — | Comment, retry, and id field support |
+
+The main difference is that this library uses typeclasses (`ToServerEvent`,
+`FromServerEvent`) to control how your domain types map to SSE fields, rather
+than distinguishing at the type level via `EventKind`. This means a single
+event type can carry mixed field types (event names, ids, JSON data, comments)
+in one `ServerEvent` record.
+
 ## Development
 
 Uses [Nix](https://nixos.org) flakes for the development environment.
