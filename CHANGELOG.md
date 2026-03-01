@@ -1,5 +1,9 @@
 # Revision history for servant-event-stream
 
+## 0.4.0.1 -- 2026-03-01
+
+* Fix haddock markup in module header (`t'JsonData'` rendered literally).
+
 ## 0.4.0.0 -- 2026-02-27
 
 * **Breaking**: Add `eventComment` and `eventRetry` fields to `ServerEvent`.
