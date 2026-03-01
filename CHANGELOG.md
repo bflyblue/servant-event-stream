@@ -1,5 +1,27 @@
 # Revision history for servant-event-stream
 
+## 0.4.0.0 -- 2026-02-27
+
+* **Breaking**: Add `eventComment` and `eventRetry` fields to `ServerEvent`.
+  Existing code using the `ServerEvent` constructor must add the new fields,
+  e.g. `ServerEvent typ eid dat Nothing Nothing`.
+* Add `serverEvent` convenience constructor matching the old 3-field API for easy migration.
+* Add `dataEvent` convenience constructor for simple data-only events.
+* Add `commentEvent` convenience constructor for heartbeat keepalives.
+* Add `retryEvent` convenience constructor for setting client reconnection delay.
+* Export `encodeServerEvent` for direct use outside of Servant.
+* Add `FromServerEvent` typeclass and `decodeServerEvent` for parsing SSE events.
+* Add `MimeUnrender EventStream` and `FramingUnrender ServerEventFraming` instances
+  for consuming SSE streams.
+* Export `ServerEventFraming` (needed for `StreamPost` SSE endpoints).
+* Always emit at least one `data:` field, even when `eventData` is empty.
+  Previously, empty data produced no output and the event was silently
+  dropped by clients.
+* Sanitize `eventType`, `eventId`, and `eventComment` by stripping CR and LF
+  characters to prevent malformed SSE output.
+* Strip NULL characters from `eventId` (the SSE spec silently ignores ids
+  containing NULL).
+
 ## 0.3.2.1 -- 2026-02-27
 
 * Add guard space after colon in SSE field encoding. Without it, field values
