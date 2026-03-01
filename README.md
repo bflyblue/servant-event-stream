@@ -50,17 +50,16 @@ data Temperature = Temperature { celsius :: Double }
   deriving (ToServerEvent, FromServerEvent) via JsonData Temperature
 ```
 
-See the [Haddock documentation](https://hackage.haskell.org/package/servant-event-stream/docs/Servant-API-EventStream.html) for the full API reference.
+See the [Haddock documentation](https://hackage.haskell.org/package/servant-event-stream/docs/Servant-API-EventStream.html) for the full API reference, or the [upgrading guide](docs/upgrading-from-0.3.md) if you're coming from 0.3.
 
 ## Coming from servant's built-in SSE
 
 Servant 0.20.3.0 added its own `ServerSentEvents` type in
-`Servant.API.ServerSentEvents`. Both libraries can coexist — just qualify
-the import you don't want as your default. If you'd like to migrate, here's
-how the concepts map:
+`Servant.API.ServerSentEvents`. Both libraries have client support with a few
+differences:
 
 | servant built-in | servant-event-stream |
-|---|---|
+| --- | --- |
 | `Servant.API.ServerSentEvents` | `Servant.API.EventStream` |
 | `ServerSentEvents 'JsonEvent MyEvent` | `ServerSentEvents (SourceIO MyEvent)` |
 | `EventKind` (`RawEvent` / `JsonEvent`) | `ToServerEvent` / `FromServerEvent` typeclasses |
